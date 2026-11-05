@@ -319,7 +319,7 @@ textarea { resize: vertical; }
 
 /* ---------- Mobile ---------- */
 @media (max-width: 899px) {
-  .topbar { padding: 8px 12px; gap: 8px; flex-wrap: wrap; }
+  .topbar { padding: 8px 12px; gap: 8px; flex-wrap: wrap; backdrop-filter: none; background: var(--bg); }
   .nav { order: 3; flex-basis: 100%; overflow-x: auto; scrollbar-width: none; }
   .nav-item { padding: 6px 10px; font-size: 14px; }
   .topbar-right { margin-left: auto; }

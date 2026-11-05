@@ -33,8 +33,8 @@ export function usePlanner() {
 
   const toast = useCallback((kind: Toast["kind"], text: string) => {
     const id = ++toastId.current;
-    setToasts((t) => [...t, { id, kind, text }]);
-    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === "error" ? 7000 : 3500);
+    setToasts((t) => [...t.slice(-1), { id, kind, text }]);
+    setTimeout(() => setToasts((t) => t.filter((x) => x.id !== id)), kind === "error" ? 7000 : 2500);
   }, []);
 
   const loadBase = useCallback(async () => {
