@@ -6,6 +6,8 @@ export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [state, setState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [message, setMessage] = useState("");
+  // Only offer Google once the provider is enabled in Supabase (Authentication → Providers).
+  const googleEnabled = process.env.NEXT_PUBLIC_GOOGLE_SIGNIN === "true";
   const failed = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("error");
 
   async function google() {
@@ -37,8 +39,12 @@ export default function LoginPage() {
         <h1 className="brand">Personal Planner</h1>
         <p className="muted">Your commitments, free time and tasks in one calm place.</p>
         {failed && <p className="alert alert-error" role="alert">That sign-in link didn’t work. Please try again.</p>}
-        <button className="btn btn-primary btn-block" onClick={google}>Continue with Google</button>
-        <div className="divider"><span>or</span></div>
+        {googleEnabled && (
+          <>
+            <button className="btn btn-primary btn-block" onClick={google}>Continue with Google</button>
+            <div className="divider"><span>or</span></div>
+          </>
+        )}
         {state === "sent" ? (
           <p className="alert alert-ok" role="status">Check {email} for a sign-in link.</p>
         ) : (
@@ -47,7 +53,7 @@ export default function LoginPage() {
               <span>Email</span>
               <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" />
             </label>
-            <button className="btn btn-block" disabled={state === "sending"}>
+            <button className={`btn btn-block ${googleEnabled ? "" : "btn-primary"}`} disabled={state === "sending"}>
               {state === "sending" ? "Sending…" : "Email me a sign-in link"}
             </button>
             {state === "error" && <p className="alert alert-error" role="alert">{message}</p>}
