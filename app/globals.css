@@ -290,7 +290,7 @@ textarea { resize: vertical; }
 .chips-large .chip { min-height: 44px; padding: 0 16px; font-size: 16px; }
 .chip-task { min-height: 44px; padding: 0 16px; font-size: 16px; border-style: dashed; }
 
-.segmented { display: inline-flex; border: 1px solid var(--line-2); border-radius: 10px; overflow: hidden; }
+.segmented { display: inline-flex; align-self: flex-start; border: 1px solid var(--line-2); border-radius: 10px; overflow: hidden; }
 .segmented button { border: 0; background: var(--surface); padding: 8px 14px; cursor: pointer; }
 .segmented button + button { border-left: 1px solid var(--line-2); }
 .segmented button.is-active { background: var(--accent); color: var(--accent-ink); font-weight: 600; }
