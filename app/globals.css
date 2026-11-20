@@ -1,59 +1,37 @@
 :root {
   color-scheme: light dark;
-  --bg: #f4f3f8;
-  --surface: #ffffff;
-  --surface-2: #eceaf2;
-  --ink: #15141a;
-  --ink-2: #4a4e59;
-  --muted: #5f6470;
-  --line: #e6e4ec;
-  --line-2: #c9c6d4;
+  --bg: light-dark(#f4f3f8, #070709);
+  --surface: light-dark(#ffffff, #121215);
+  --surface-2: light-dark(#eceaf2, #1b1b20);
+  --ink: light-dark(#15141a, #f3f2ee);
+  --ink-2: light-dark(#4a4e59, #b9bec8);
+  --muted: light-dark(#5f6470, #9ba1ad);
+  --line: light-dark(#e6e4ec, #23262d);
+  --line-2: light-dark(#c9c6d4, #3a3f4a);
   --accent: #6c47ff;
   --accent-hover: #5a38e8;
   --accent-ink: #ffffff;
-  --accent-text: #5a38e8;
-  --accent-soft: #efebff;
-  --danger: #b4234a;
-  --danger-soft: #fce8ee;
-  --danger-line: #f0b8c6;
-  --warn: #8a5a00;
-  --warn-soft: #fbf0d9;
-  --ok: #1f7a45;
-  --ok-soft: #e3f4e9;
-  --now: #f08a00;
-  --focus: #6c47ff;
+  --accent-text: light-dark(#5a38e8, #a893ff);
+  --accent-soft: light-dark(#efebff, #14112a);
+  --danger: light-dark(#b4234a, #ff9eb3);
+  --danger-soft: light-dark(#fce8ee, #2a1219);
+  --danger-line: light-dark(#f0b8c6, #5a2333);
+  --warn: light-dark(#8a5a00, #ffd071);
+  --warn-soft: light-dark(#fbf0d9, #2a2110);
+  --ok: light-dark(#1f7a45, #7fd99a);
+  --ok-soft: light-dark(#e3f4e9, #10261a);
+  --now: light-dark(#f08a00, #ffb347);
+  --focus: light-dark(#6c47ff, #a893ff);
   --radius: 20px;
   --radius-sm: 12px;
-  --shadow: 0 1px 2px rgba(40, 20, 120, 0.05), 0 8px 28px rgba(40, 20, 120, 0.07);
+  --shadow: 0 1px 2px light-dark(rgba(40, 20, 120, 0.05), rgba(0, 0, 0, 0.3)), 0 8px 28px light-dark(rgba(40, 20, 120, 0.07), rgba(0, 0, 0, 0.5));
   --font: ui-sans-serif, -apple-system, "Segoe UI", Inter, Roboto, "Helvetica Neue", Arial, sans-serif;
   --hour-px: 48px;
 }
 
-/* Dark theme follows the system setting. */
-@media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #070709;
-    --surface: #121215;
-    --surface-2: #1b1b20;
-    --ink: #f3f2ee;
-    --ink-2: #b9bec8;
-    --muted: #9ba1ad;
-    --line: #23262d;
-    --line-2: #3a3f4a;
-    --accent-text: #a893ff;
-    --accent-soft: #14112a;
-    --danger: #ff9eb3;
-    --danger-soft: #2a1219;
-    --danger-line: #5a2333;
-    --warn: #ffd071;
-    --warn-soft: #2a2110;
-    --ok: #7fd99a;
-    --ok-soft: #10261a;
-    --now: #ffb347;
-    --focus: #a893ff;
-    --shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
-  }
-}
+/* Theme follows the system unless Settings stores a choice in data-theme. */
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
 
 /* Activity palette: solid fill, mid-tone edge for swatches, dark ink. Same in both themes. */
 .act-sage  { --a-bg: #a5dda0; --a-bd: #4e9a48; --a-ink: #0e2a0c; }
