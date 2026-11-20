@@ -4,6 +4,7 @@ import { DateTime } from "luxon";
 import { usePlanner } from "./usePlanner";
 import { todayISO, isTaskOverdue, startOfWeek } from "@/lib/time";
 import WeekView from "./WeekView";
+import WeekSidebar from "./WeekSidebar";
 import AgendaView from "./AgendaView";
 import TasksView from "./TasksView";
 import ActivityTypesView from "./ActivityTypesView";
@@ -145,7 +146,10 @@ export default function Planner() {
       <main className={`main ${panel ? "has-panel" : ""}`}>
         <section className="content">
           {view === "week" && (
-            <WeekView ctx={ctx} day={day} setDay={setDay} onOpen={(id) => setPanel({ kind: "appt", id })} onOpenTask={(id) => setPanel({ kind: "edit-task", id })} onCreate={(date, start, end) => setPanel({ kind: "new-appt", date, start, end })} overdueCount={overdueCount} showTasks={() => setView("tasks")} />
+            <div className="week-layout">
+              <WeekSidebar ctx={ctx} day={day} setDay={setDay} onOpen={(id) => setPanel({ kind: "appt", id })} onOpenTask={(id) => setPanel({ kind: "edit-task", id })} />
+              <WeekView ctx={ctx} day={day} setDay={setDay} onOpen={(id) => setPanel({ kind: "appt", id })} onOpenTask={(id) => setPanel({ kind: "edit-task", id })} onCreate={(date, start, end) => setPanel({ kind: "new-appt", date, start, end })} overdueCount={overdueCount} showTasks={() => setView("tasks")} />
+            </div>
           )}
           {view === "agenda" && (
             <AgendaView ctx={ctx} day={day} setDay={setDay} onOpen={(id) => setPanel({ kind: "appt", id })} onOpenTask={(id) => setPanel({ kind: "edit-task", id })} onWeek={() => setView("week")} />
