@@ -1,12 +1,16 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabase/client";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [state, setState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [message, setMessage] = useState("");
-  const failed = typeof window !== "undefined" && new URLSearchParams(window.location.search).has("error");
+  // Read the error flag after mount so the server and first client render match (avoids a hydration error).
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    setFailed(new URLSearchParams(window.location.search).has("error"));
+  }, []);
 
   async function google() {
     await supabaseBrowser().auth.signInWithOAuth({
