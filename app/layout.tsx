@@ -6,7 +6,11 @@ export const metadata: Metadata = {
   title: "Personal Planner",
   description: "Appointments, tasks and reminders",
   manifest: "/manifest.webmanifest",
-  icons: { icon: "/icon.svg", apple: "/icon-192.png" },
+  // SVG for browsers that take it, .ico for those that do not; the Apple icon is full-bleed because iOS rounds it itself.
+  icons: {
+    icon: [{ url: "/icon.svg", type: "image/svg+xml" }, { url: "/favicon.ico", sizes: "48x48" }],
+    apple: "/apple-touch-icon.png",
+  },
   appleWebApp: { capable: true, title: "Planner", statusBarStyle: "default" },
 };
 
