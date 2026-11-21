@@ -22,7 +22,11 @@ export default function LoginPage() {
 
   // Read the error flag after mount so the server and first client render match (avoids a hydration error).
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).has("error")) setError("That sign-in link didn’t work. Try again.");
+    const params = new URLSearchParams(window.location.search);
+    if (params.has("error")) setError("That sign-in link didn’t work. Try again.");
+    // Someone opened a circle invite link while signed out: keep the token so the planner can show it after sign-in.
+    const invite = params.get("invite");
+    if (invite) localStorage.setItem("pending-invite", invite);
   }, []);
 
   function go(next: Mode, message = "") {

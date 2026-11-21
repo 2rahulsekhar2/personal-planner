@@ -17,9 +17,12 @@ import Panel from "./Panel";
 import { useNotificationStatus, STATUS_LABEL } from "./NotificationBadge";
 import AccountMenu from "./AccountMenu";
 import { useDismiss } from "./useDismiss";
+import CirclesView from "./CirclesView";
+import { useCircles } from "./useCircles";
+import { isOpen } from "@/lib/circles";
 import { registerServiceWorker } from "@/lib/push-client";
 
-export type View = "week" | "agenda" | "tasks" | "types" | "places" | "settings";
+export type View = "week" | "agenda" | "tasks" | "types" | "places" | "settings" | "circles";
 
 export type PanelState =
   | { kind: "new-appt"; typeId?: string; date?: string; start?: string; end?: string }
@@ -56,6 +59,10 @@ export default function Planner() {
   const [day, setDay] = useState<string>(() => todayISO(tz));
   const [panel, setPanel] = useState<PanelState>(null);
   const [menu, setMenu] = useState(false);
+  const circles = useCircles(ctx.supabase);
+  const [inviteToken, setInviteToken] = useState<string | null>(null);
+  const myEmail = ctx.email?.toLowerCase();
+  const pendingInvites = circles.invites.filter((i) => i.email === myEmail && isOpen(i)).length;
   // A dot on the gear warns when this device will not get reminders but could. Unsupported browsers get no dot: nothing to fix there.
   const [status] = useNotificationStatus();
   const remindersOff = !!status && status !== "enabled" && status !== "unsupported";
@@ -64,7 +71,15 @@ export default function Planner() {
   // Desktop defaults to the week; phones default to today's agenda.
   useEffect(() => {
     // A password-reset link lands on /?password: open Settings, where the password field takes focus.
-    if (new URLSearchParams(window.location.search).has("password")) setView("settings");
+    const params = new URLSearchParams(window.location.search);
+    // An invite link lands on /?invite=TOKEN. If sign-in came first, the login page kept the token for us.
+    const invite = params.get("invite") ?? localStorage.getItem("pending-invite");
+    localStorage.removeItem("pending-invite");
+    if (invite) {
+      setInviteToken(invite);
+      window.history.replaceState(null, "", "/");
+      setView("circles");
+    } else if (params.has("password")) setView("settings");
     else setView(window.matchMedia("(min-width: 900px)").matches ? "week" : "agenda");
     registerServiceWorker().catch(() => {});
   }, []);
@@ -153,7 +168,7 @@ export default function Planner() {
             </svg>
             {remindersOff && <span className="alert-dot" aria-hidden />}
           </button>
-          <AccountMenu ctx={ctx} />
+          <AccountMenu ctx={ctx} invites={pendingInvites} onCircles={() => setView("circles")} />
           <div className="add-wrap" ref={addRef}>
             <button className="btn btn-primary btn-add" aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(!menu)}>
               <svg className="add-plus" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
@@ -203,6 +218,7 @@ export default function Planner() {
           {view === "types" && <ActivityTypesView ctx={ctx} />}
           {view === "places" && <PlacesView ctx={ctx} />}
           {view === "settings" && <SettingsView ctx={ctx} />}
+          {view === "circles" && <CirclesView ctx={ctx} state={circles} linkToken={inviteToken} clearLink={() => setInviteToken(null)} />}
         </section>
         {panel && (
           <Panel title={panelTitle} onClose={closePanel}>
