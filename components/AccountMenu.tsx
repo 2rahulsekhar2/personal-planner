@@ -4,7 +4,7 @@ import type { PlannerCtx } from "./usePlanner";
 import { useDismiss } from "./useDismiss";
 
 // The avatar in the top bar: who is signed in, the theme for this device, and sign out.
-export default function AccountMenu({ ctx, invites, onCircles }: { ctx: PlannerCtx; invites: number; onCircles: () => void }) {
+export default function AccountMenu({ ctx, invites, onCircles, onActivity }: { ctx: PlannerCtx; invites: number; onCircles: () => void; onActivity: () => void }) {
   const { email, supabase, toast } = ctx;
   const [open, setOpen] = useState(false);
   const ref = useDismiss(open, useCallback(() => setOpen(false), []));
@@ -55,6 +55,17 @@ export default function AccountMenu({ ctx, invites, onCircles }: { ctx: PlannerC
             <span className="grow">
               <span className="add-label">Circles</span>
               <span className="add-hint">{invites ? `${invites} invite${invites > 1 ? "s" : ""} waiting` : "Family, teams, friends"}</span>
+            </span>
+          </button>
+          <button className="add-item" onClick={() => { setOpen(false); onActivity(); }}>
+            <span className="add-icon" aria-hidden>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M3 12h4l3-8 4 16 3-8h4" />
+              </svg>
+            </span>
+            <span className="grow">
+              <span className="add-label">Activity</span>
+              <span className="add-hint">Who did what</span>
             </span>
           </button>
           <fieldset className="field account-theme">

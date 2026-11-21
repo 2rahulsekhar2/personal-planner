@@ -18,11 +18,12 @@ import { useNotificationStatus, STATUS_LABEL } from "./NotificationBadge";
 import AccountMenu from "./AccountMenu";
 import { useDismiss } from "./useDismiss";
 import CirclesView from "./CirclesView";
+import ActivityView from "./ActivityView";
 import { useCircles } from "./useCircles";
 import { isOpen, seatsOf } from "@/lib/circles";
 import { registerServiceWorker } from "@/lib/push-client";
 
-export type View = "week" | "agenda" | "tasks" | "types" | "places" | "settings" | "circles";
+export type View = "week" | "agenda" | "tasks" | "types" | "places" | "settings" | "circles" | "activity";
 
 export type PanelState =
   | { kind: "new-appt"; typeId?: string; date?: string; start?: string; end?: string }
@@ -207,7 +208,7 @@ export default function Planner() {
             </svg>
             {remindersOff && <span className="alert-dot" aria-hidden />}
           </button>
-          <AccountMenu ctx={ctx} invites={pendingInvites} onCircles={() => setView("circles")} />
+          <AccountMenu ctx={ctx} invites={pendingInvites} onCircles={() => setView("circles")} onActivity={() => setView("activity")} />
         </div>
       </header>
 
@@ -260,6 +261,7 @@ export default function Planner() {
           {view === "places" && <PlacesView ctx={ctx} />}
           {view === "settings" && <SettingsView ctx={ctx} />}
           {view === "circles" && <CirclesView ctx={ctx} state={circles} linkToken={inviteToken} clearLink={() => setInviteToken(null)} />}
+          {view === "activity" && <ActivityView ctx={ctx} circles={circles.circles} />}
         </section>
         {panel && (
           <Panel title={panelTitle} onClose={closePanel}>
