@@ -44,13 +44,16 @@ function ViewToggle({ view, onChange }: { view: View; onChange: (v: View) => voi
   );
 }
 
-type AddKey = "event" | "task" | "activity" | "place";
-// The Add menu has two tiers: what goes on the calendar (appointment, task), then the lists those draw on.
+type AddKey = "event" | "task" | "activity" | "place" | "circles" | "log";
+// The Add menu has two tiers: what goes on the calendar (appointment, task), then what those draw on:
+// your activities, your places, and the circles of people you plan with.
 const ADD_ITEMS: { key: AddKey; label: string; hint?: string; icon: React.ReactNode }[] = [
   { key: "event", label: "Appointment", hint: "A booked time", icon: <><rect x="3" y="4.5" width="18" height="16" rx="3" /><path d="M8 2.5v4M16 2.5v4M3 9.5h18" /></> },
   { key: "task", label: "Task", hint: "Something to do", icon: <><rect x="3.5" y="3.5" width="17" height="17" rx="5" /><path d="M8 12.5l2.8 2.8L16 9.5" /></> },
   { key: "activity", label: "Activities", icon: <><path d="M3 12V4.5A1.5 1.5 0 0 1 4.5 3H12l9 9-8.5 8.5a1.5 1.5 0 0 1-2.1 0L3 12z" /><circle cx="7.5" cy="7.5" r="1.2" /></> },
   { key: "place", label: "Places", icon: <><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z" /><circle cx="12" cy="10" r="2.3" /></> },
+  { key: "circles", label: "Circles", icon: <path d="M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2.5 20a6.5 6.5 0 0 1 13 0M16.5 11a3 3 0 1 0 0-6M17.5 14.6a5.5 5.5 0 0 1 4 5.4" /> },
+  { key: "log", label: "History", icon: <path d="M3 12h4l3-8 4 16 3-8h4" /> },
 ];
 
 export default function Planner() {
@@ -157,7 +160,7 @@ export default function Planner() {
   const pick = (key: AddKey) => {
     if (key === "event") return setPanel({ kind: "new-appt" });
     setPanel(key === "task" ? { kind: "new-task" } : null);
-    setView(key === "task" ? "tasks" : key === "activity" ? "types" : "places");
+    setView(key === "task" ? "tasks" : key === "activity" ? "types" : key === "circles" ? "circles" : key === "log" ? "activity" : "places");
   };
 
   let panelBody: React.ReactNode = null;
@@ -193,13 +196,23 @@ export default function Planner() {
   }
 
   if (loading || !view) {
-    return <div className="center-screen muted" role="status">Loading your planner…</div>;
+    return (
+      <div className="center-screen muted" role="status">
+        <div className="loading-mark">
+          <img src="/icon.svg" alt="" width={48} height={48} />
+          <p>Loading your planner…</p>
+        </div>
+      </div>
+    );
   }
 
   return (
     <div className="app">
       <header className="topbar">
-        <button className="brand" title="Back to calendar" onClick={() => setView(calView.current)}>Planner</button>
+        <button className="brand" title="Back to calendar" onClick={() => setView(calView.current)}>
+          <img src="/icon.svg" alt="" width={26} height={26} />
+          Planner
+        </button>
         <div className="topbar-right">
           <button className={`icon-btn nav-settings ${view === "settings" ? "is-active" : ""}`} aria-label={remindersOff ? `Settings: ${STATUS_LABEL[status!]}` : "Settings"} title={remindersOff ? STATUS_LABEL[status!] : "Settings"} aria-current={view === "settings" ? "page" : undefined} onClick={toggleSettings}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -208,7 +221,7 @@ export default function Planner() {
             </svg>
             {remindersOff && <span className="alert-dot" aria-hidden />}
           </button>
-          <AccountMenu ctx={ctx} invites={pendingInvites} onCircles={() => setView("circles")} onActivity={() => setView("activity")} />
+          <AccountMenu ctx={ctx} />
         </div>
       </header>
 
@@ -218,6 +231,7 @@ export default function Planner() {
           <svg className="add-plus" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
           <span className="add-text">Add</span>
           {overdueCount > 0 && <span className="count count-alert" aria-label={`${overdueCount} overdue tasks`}>{overdueCount}</span>}
+          {pendingInvites > 0 && <span className="alert-dot invite-dot" role="img" aria-label="A circle invite is waiting" />}
         </button>
         {menu && (
           <div className="pop-menu add-menu" role="menu" aria-label="Add">
@@ -231,6 +245,7 @@ export default function Planner() {
                     <span className="add-label">{it.label}</span>
                     {it.hint && <span className="add-hint">{it.hint}</span>}
                     {it.key === "task" && overdueCount > 0 && <span className="count count-alert" aria-label={`${overdueCount} overdue`}>{overdueCount}</span>}
+                        {it.key === "circles" && pendingInvites > 0 && <span className="count count-alert" aria-label={`${pendingInvites} invite${pendingInvites > 1 ? "s" : ""} waiting`}>{pendingInvites}</span>}
                   </button>
                 ))}
               </div>
