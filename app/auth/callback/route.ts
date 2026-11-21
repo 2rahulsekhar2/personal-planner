@@ -7,7 +7,8 @@ export async function GET(request: Request) {
   if (code) {
     const supabase = await supabaseServer();
     const { error } = await supabase.auth.exchangeCodeForSession(code);
-    if (!error) return NextResponse.redirect(`${origin}/`);
+    // "next" is matched against a fixed value, never used as a URL, so it can't redirect off-site.
+    if (!error) return NextResponse.redirect(`${origin}/${searchParams.get("next") === "password" ? "?password" : ""}`);
   }
   return NextResponse.redirect(`${origin}/login?error=1`);
 }

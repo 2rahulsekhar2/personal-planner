@@ -240,3 +240,27 @@ describe("POST /auth/exists", () => {
     expect((await ask(undefined)).status).toBe(400);
   });
 });
+
+describe("auth callback", () => {
+  const land = async (query: string, error: unknown = null) => {
+    mocks.supabaseServer.mockResolvedValue({ auth: { exchangeCodeForSession: async () => ({ error }) } });
+    const { GET } = await import("@/app/auth/callback/route");
+    return (await GET(new Request(`http://localhost/auth/callback?${query}`))).headers.get("location");
+  };
+
+  it("opens the app after a normal sign-in", async () => {
+    expect(await land("code=abc")).toBe("http://localhost/");
+  });
+
+  it("opens the password setting after a reset link", async () => {
+    expect(await land("code=abc&next=password")).toBe("http://localhost/?password");
+  });
+
+  it("ignores any other next value", async () => {
+    expect(await land("code=abc&next=https://evil.example")).toBe("http://localhost/");
+  });
+
+  it("returns to login when the code is rejected", async () => {
+    expect(await land("code=abc&next=password", { message: "bad" })).toBe("http://localhost/login?error=1");
+  });
+});
