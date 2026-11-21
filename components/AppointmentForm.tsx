@@ -6,6 +6,7 @@ import { APPT_FIELDS } from "./usePlanner";
 import type { Appointment, AppointmentStatus } from "@/lib/types";
 import { ACTIVITY_COLORS, REMINDER_CHOICES } from "@/lib/types";
 import { ColorPicker } from "./ActivityTypesView";
+import Select from "./Select";
 import { findConflicts, isOverlapError } from "@/lib/conflicts";
 import type { Circle } from "@/lib/circles";
 import { fmtRange, todayISO, toInterval } from "@/lib/time";
@@ -488,10 +489,16 @@ export default function AppointmentForm({
           </fieldset>
           <label className="field">
             <span>Reminder</span>
-            <select value={reminder === null ? "none" : String(reminder)} onChange={(e) => setReminder(e.target.value === "none" ? null : Number(e.target.value))}>
-              {REMINDER_CHOICES.map((c) => <option key={String(c.value)} value={c.value === null ? "none" : c.value}>{c.label}</option>)}
-              {reminder !== null && !REMINDER_CHOICES.some((c) => c.value === reminder) && <option value={reminder}>{reminder} minutes before</option>}
-            </select>
+            <Select
+              id="appt-reminder"
+              value={reminder === null ? "none" : String(reminder)}
+              options={[
+                ...REMINDER_CHOICES.map((c) => ({ value: c.value === null ? "none" : String(c.value), label: c.label })),
+                // A reminder set to some other number of minutes keeps its own entry.
+                ...(reminder !== null && !REMINDER_CHOICES.some((c) => c.value === reminder) ? [{ value: String(reminder), label: `${reminder} minutes before` }] : []),
+              ]}
+              onChange={(v) => setReminder(v === "none" ? null : Number(v))}
+            />
           </label>
           <label className="field"><span>Team <span className="muted">(optional)</span></span><input value={team} onChange={(e) => setTeam(e.target.value)} placeholder="Sunday XI" /></label>
 

@@ -4,6 +4,7 @@ import type { PlannerCtx } from "./usePlanner";
 import { REMINDER_CHOICES, type PushSubscriptionRow } from "@/lib/types";
 import { deviceTimeZone } from "@/lib/time";
 import { useNotificationStatus, STATUS_LABEL } from "./NotificationBadge";
+import Select from "./Select";
 import { disableNotifications, enableNotifications, isIOS, sendTestNotification } from "@/lib/push-client";
 
 function deviceName(ua: string | null) {
@@ -109,82 +110,101 @@ export default function SettingsView({ ctx }: { ctx: PlannerCtx }) {
 
   const deviceTz = deviceTimeZone();
 
+  const ok = status === "enabled";
+  // How to get reminders working, when it takes more than one step. A real sequence, so it is numbered.
+  const steps =
+    status === "blocked" ? ["Open your browser’s site settings (the icon left of the address bar).", "Set Notifications to Allow.", "Reload this page."]
+    : status === "needs-home-screen" ? ["Tap Share.", "Tap “Add to Home Screen”.", "Open the app from there and enable reminders."]
+    : null;
+
   return (
-    <div className="page">
+    <div className="page settings">
       <div className="page-head"><h1>Settings</h1></div>
 
-      <section className="card stack">
-        <h2 className="section-title">Reminders on this device</h2>
-        <p className={`status-line ${status === "enabled" ? "is-ok" : "is-warn"}`} role="status">
-          <span aria-hidden>{status === "enabled" ? "🔔" : "🔕"}</span> <strong>{status ? STATUS_LABEL[status] : "Checking…"}</strong>
-        </p>
-        {status === "enabled" && <p className="muted">This browser will receive reminders even when the app isn’t open, as long as the device is online and system notifications are allowed.</p>}
-        {status === "not-enabled" && <p className="muted">Reminders won’t reach this device until you enable them. Each browser and device is set up separately.</p>}
-        {status === "blocked" && (
-          <div className="alert alert-warn">
-            Notifications are blocked for this site. Your calendar still works. To turn reminders on, open your browser’s site settings (the icon left of the address bar), set Notifications to Allow, then reload this page.
+      <section>
+        <h2 className="set-title">Reminders on this device</h2>
+        <div className="card set-card">
+          <div className={`set-status ${ok ? "is-ok" : "is-warn"}`} role="status">
+            <span className="set-bell" aria-hidden>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M6 9.5a6 6 0 0 1 12 0c0 4.5 2 5.5 2 6.5H4c0-1 2-2 2-6.5zM10 19.5a2 2 0 0 0 4 0" />
+                {!ok && <path d="M4 4l16 16" />}
+              </svg>
+            </span>
+            <div className="grow">
+              <strong>{status ? STATUS_LABEL[status] : "Checking…"}</strong>
+              <p className="set-desc">
+                {status === "enabled" && "This browser will receive reminders even when the app isn’t open, as long as the device is online and system notifications are allowed."}
+                {status === "not-enabled" && "Reminders won’t reach this device until you enable them. Each browser and device is set up separately."}
+                {status === "blocked" && "Notifications are blocked for this site. Your calendar still works. To turn reminders on:"}
+                {status === "needs-home-screen" && "On iPhone and iPad, reminders only work after adding this app to your Home Screen:"}
+                {status === "unsupported" && "This browser doesn’t support web push reminders. Try Chrome, Edge, Firefox or Safari 16.4+."}
+              </p>
+              {steps && <ol className="set-steps">{steps.map((x) => <li key={x}>{x}</li>)}</ol>}
+            </div>
+            {(status === "not-enabled" || ok) && (
+              <div className="set-actions">
+                {status === "not-enabled" && <button className="btn btn-primary" disabled={busy} onClick={enable}>Enable reminders</button>}
+                {ok && <button className="btn" disabled={busy} onClick={test}>Send test notification</button>}
+                {ok && <button className="btn btn-ghost" disabled={busy} onClick={disable}>Turn off on this device</button>}
+              </div>
+            )}
           </div>
-        )}
-        {status === "needs-home-screen" && (
-          <div className="alert alert-warn">
-            On iPhone and iPad, reminders only work after adding this app to your Home Screen: tap Share, then “Add to Home Screen”, then open the app from there and enable reminders.
-          </div>
-        )}
-        {status === "unsupported" && <div className="alert alert-warn">This browser doesn’t support web push reminders. Try Chrome, Edge, Firefox or Safari 16.4+.</div>}
-        <div className="row">
-          {(status === "not-enabled") && <button className="btn btn-primary" disabled={busy} onClick={enable}>Enable reminders</button>}
-          {status === "enabled" && <button className="btn" disabled={busy} onClick={test}>Send test notification</button>}
-          {status === "enabled" && <button className="btn btn-ghost" disabled={busy} onClick={disable}>Turn off on this device</button>}
-        </div>
-        <p className="hint">Reminders can’t be guaranteed to the exact second. They depend on the browser, connection and system settings{isIOS() ? ", and on iOS the Home Screen app" : ""}.</p>
 
-        {devices.length > 0 && (
-          <>
-            <h3 className="subhead">Devices receiving reminders</h3>
-            <ul className="list">
-              {devices.map((d) => (
-                <li key={d.id} className="list-row">
-                  <span className="grow">{deviceName(d.user_agent)} <span className="muted">· added {new Date(d.created_at).toLocaleDateString()}</span></span>
-                  <button className="btn btn-ghost btn-sm" onClick={() => removeDevice(d.id)}>Remove</button>
-                </li>
-              ))}
-            </ul>
-          </>
-        )}
+          {devices.map((d) => (
+            <div key={d.id} className="set-row">
+              <div>
+                <span className="set-label">{deviceName(d.user_agent)}</span>
+                <p className="set-desc">Receiving reminders since {new Date(d.created_at).toLocaleDateString()}</p>
+              </div>
+              <button className="btn btn-ghost btn-sm" onClick={() => removeDevice(d.id)}>Remove</button>
+            </div>
+          ))}
+        </div>
+        <p className="hint set-foot">Reminders can’t be guaranteed to the exact second. They depend on the browser, connection and system settings{isIOS() ? ", and on iOS the Home Screen app" : ""}.</p>
       </section>
 
-      <section className="card stack">
-        <h2 className="section-title">Defaults</h2>
-        <label className="field">
-          <span>Default appointment reminder</span>
-          <select value={profile?.default_reminder_minutes == null ? "none" : String(profile.default_reminder_minutes)} onChange={(e) => update({ default_reminder_minutes: e.target.value === "none" ? null : Number(e.target.value) })}>
-            {REMINDER_CHOICES.map((c) => <option key={String(c.value)} value={c.value === null ? "none" : c.value}>{c.label}</option>)}
-          </select>
-        </label>
-        <label className="field">
-          <span>Time zone</span>
-          <select value={profile?.time_zone ?? tz} onChange={(e) => update({ time_zone: e.target.value })}>
-            {zones.map((z) => <option key={z} value={z}>{z.replace(/_/g, " ")}</option>)}
-          </select>
-          {profile?.time_zone && profile.time_zone !== deviceTz && (
-            <span className="hint">This device is set to {deviceTz}. <button className="link" onClick={() => update({ time_zone: deviceTz })}>Use it</button></span>
-          )}
-        </label>
-        <label className="check">
-          <input type="checkbox" checked={!!profile?.show_cancelled} onChange={(e) => update({ show_cancelled: e.target.checked })} /> Show cancelled appointments in the calendar
-        </label>
+      <section>
+        <h2 className="set-title">Defaults</h2>
+        <div className="card set-card">
+          <div className="set-row">
+            <label htmlFor="set-reminder" className="set-label">Default appointment reminder</label>
+            <Select
+              id="set-reminder"
+              value={profile?.default_reminder_minutes == null ? "none" : String(profile.default_reminder_minutes)}
+              options={REMINDER_CHOICES.map((c) => ({ value: c.value === null ? "none" : String(c.value), label: c.label }))}
+              onChange={(v) => update({ default_reminder_minutes: v === "none" ? null : Number(v) })}
+            />
+          </div>
+          <div className="set-row">
+            <div>
+              <label htmlFor="set-tz" className="set-label">Time zone</label>
+              {profile?.time_zone && profile.time_zone !== deviceTz && (
+                <p className="set-desc">This device is set to {deviceTz}. <button className="link" onClick={() => update({ time_zone: deviceTz })}>Use it</button></p>
+              )}
+            </div>
+            <Select id="set-tz" search value={profile?.time_zone ?? tz} options={zones.map((z) => ({ value: z, label: z.replace(/_/g, " ") }))} onChange={(v) => update({ time_zone: v })} />
+          </div>
+          <div className="set-row">
+            <label htmlFor="set-cancelled" className="set-label">Show cancelled appointments in the calendar</label>
+            <input id="set-cancelled" type="checkbox" role="switch" className="switch" checked={!!profile?.show_cancelled} onChange={(e) => update({ show_cancelled: e.target.checked })} />
+          </div>
+        </div>
       </section>
 
       {/* Who is signed in, and sign out, live in the avatar menu. The password stays here: a reset link opens this page. */}
-      <section className="card stack">
-        <h2 className="section-title">Password</h2>
-        <form onSubmit={savePassword} className="stack">
-          <label className="field">
-            <span>{resetting ? "Choose a new password" : "Set or change password"}</span>
-            <input type="password" autoFocus={resetting} required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
-          </label>
-          <div>
-            <button className="btn">Save password</button>
+      <section>
+        <h2 className="set-title">Password</h2>
+        <form onSubmit={savePassword} className="card set-card">
+          <div className="set-row">
+            <div>
+              <label htmlFor="set-password" className="set-label">{resetting ? "Choose a new password" : "Set or change password"}</label>
+              <p className="set-desc">At least 8 characters.</p>
+            </div>
+            <div className="set-password">
+              <input id="set-password" type="password" autoFocus={resetting} required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
+              <button className="btn">Save password</button>
+            </div>
           </div>
         </form>
       </section>
