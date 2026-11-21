@@ -145,11 +145,44 @@ button.brand { border: 0; background: none; padding: 0; cursor: pointer; }
 .add-mini .add-label { font-weight: 500; font-size: 14px; }
 @keyframes add-menu-in { from { opacity: 0; scale: .94; } }
 .avatar { display: grid; place-items: center; width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0; border: 0; background: var(--accent); color: var(--accent-ink); font-weight: 700; }
-button.avatar { cursor: pointer; }
+button.avatar { position: relative; cursor: pointer; }
+.avatar-sm { width: 26px; height: 26px; font-size: 12px; }
+.avatar-pending { background: var(--surface-2); color: var(--muted); }
+/* Circles */
+.circle-head { display: flex; align-items: center; gap: 18px; }
+.circle-name { font-size: 20px; }
+.circle-count { margin: 2px 0 10px; font-size: 13px; }
+/* The orbit: the circle's initial in the middle, one seat per person spaced evenly round the ring.
+   --n is the number of seats and --i a seat's position; the first seat sits at the top. */
+.orbit { --r: 44px; position: relative; width: 116px; height: 116px; flex-shrink: 0; }
+.orbit::before { content: ""; position: absolute; inset: 14px; border: 1.5px dashed var(--line-2); border-radius: 50%; }
+.orbit-core {
+  position: absolute; inset: 34px; display: grid; place-items: center; border-radius: 50%;
+  background: var(--accent-soft); color: var(--accent-text); font-size: 20px; font-weight: 700;
+}
+.orbit-seat {
+  --a: calc(360deg / var(--n) * var(--i) - 90deg);
+  position: absolute; left: 50%; top: 50%; width: 28px; height: 28px; margin: -14px; display: grid; place-items: center; border-radius: 50%;
+  transform: rotate(var(--a)) translate(var(--r)) rotate(calc(var(--a) * -1));
+  background: var(--a-bg); color: var(--a-ink); font-size: 12px; font-weight: 700; box-shadow: 0 0 0 2px var(--surface);
+}
+.orbit-seat.is-owner { box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--accent); }
+.orbit-seat.is-pending { background: var(--surface); color: var(--muted); border: 1.5px dashed var(--line-2); box-shadow: none; }
+.orbit-seat.is-draft { border-color: var(--accent); color: var(--accent-text); background: var(--accent-soft); }
+/* The invite form: a tinted panel, matching the seat it is about to add. */
+.seat-form { display: flex; flex-direction: column; gap: 10px; padding: 14px; border-radius: 14px; background: var(--accent-soft); }
+.seat-form .hint { margin: 0; }
+.seat-role .chips-xs { margin-top: 0; }
+.circle-people .avatar[class*="act-"] { background: var(--a-bg); color: var(--a-ink); }
+.circle-who { display: flex; flex-direction: column; min-width: 0; font-size: 13px; }
+/* Actions drop to their own line, so the email is never squeezed. */
+.circle-people .row-actions { flex-basis: 100%; margin: -6px 0 0 28px; }
+.circle-email { font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.circle-invite { border-color: var(--accent); }
 button.avatar:hover { background: var(--accent-hover); }
 .account-who { display: flex; align-items: center; gap: 12px; padding: 10px 12px 12px; min-width: 0; }
 .account-email { display: block; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pop-menu .account-theme { padding: 12px; border-block: 1px solid var(--line); margin-bottom: 4px; }
+.pop-menu .account-theme { padding: 12px; border-block: 1px solid var(--line); margin-block: 4px; }
 .account-theme .segmented { display: flex; align-self: stretch; }
 .account-theme .segmented button { flex: 1; }
 

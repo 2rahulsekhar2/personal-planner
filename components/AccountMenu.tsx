@@ -4,7 +4,7 @@ import type { PlannerCtx } from "./usePlanner";
 import { useDismiss } from "./useDismiss";
 
 // The avatar in the top bar: who is signed in, the theme for this device, and sign out.
-export default function AccountMenu({ ctx }: { ctx: PlannerCtx }) {
+export default function AccountMenu({ ctx, invites, onCircles }: { ctx: PlannerCtx; invites: number; onCircles: () => void }) {
   const { email, supabase, toast } = ctx;
   const [open, setOpen] = useState(false);
   const ref = useDismiss(open, useCallback(() => setOpen(false), []));
@@ -33,7 +33,10 @@ export default function AccountMenu({ ctx }: { ctx: PlannerCtx }) {
 
   return (
     <div className="add-wrap" ref={ref}>
-      <button className="avatar" aria-label="Account" title="Account" aria-haspopup="true" aria-expanded={open} onClick={() => setOpen(!open)}>{initial}</button>
+      <button className="avatar" aria-label={invites ? `Account, ${invites} circle invite${invites > 1 ? "s" : ""}` : "Account"} title="Account" aria-haspopup="true" aria-expanded={open} onClick={() => setOpen(!open)}>
+        {initial}
+        {invites > 0 && <span className="alert-dot" aria-hidden />}
+      </button>
       {open && (
         <div className="pop-menu account-menu" role="group" aria-label="Account">
           <div className="account-who">
@@ -43,6 +46,17 @@ export default function AccountMenu({ ctx }: { ctx: PlannerCtx }) {
               <span className="account-email">{email}</span>
             </span>
           </div>
+          <button className="add-item" onClick={() => { setOpen(false); onCircles(); }}>
+            <span className="add-icon" aria-hidden>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2.5 20a6.5 6.5 0 0 1 13 0M16.5 11a3 3 0 1 0 0-6M17.5 14.6a5.5 5.5 0 0 1 4 5.4" />
+              </svg>
+            </span>
+            <span className="grow">
+              <span className="add-label">Circles</span>
+              <span className="add-hint">{invites ? `${invites} invite${invites > 1 ? "s" : ""} waiting` : "Family, teams, friends"}</span>
+            </span>
+          </button>
           <fieldset className="field account-theme">
             <legend>Theme on this device</legend>
             <div className="segmented">
