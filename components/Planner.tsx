@@ -63,7 +63,9 @@ export default function Planner() {
 
   // Desktop defaults to the week; phones default to today's agenda.
   useEffect(() => {
-    setView(window.matchMedia("(min-width: 900px)").matches ? "week" : "agenda");
+    // A password-reset link lands on /?password: open Settings, where the password field takes focus.
+    if (new URLSearchParams(window.location.search).has("password")) setView("settings");
+    else setView(window.matchMedia("(min-width: 900px)").matches ? "week" : "agenda");
     registerServiceWorker().catch(() => {});
   }, []);
 
