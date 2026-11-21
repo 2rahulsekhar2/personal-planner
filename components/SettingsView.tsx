@@ -90,6 +90,18 @@ export default function SettingsView({ ctx }: { ctx: PlannerCtx }) {
     loadDevices();
   }
 
+  const [password, setPassword] = useState("");
+  async function savePassword(e: React.FormEvent) {
+    e.preventDefault();
+    const { error } = await supabase.auth.updateUser({ password });
+    if (error) {
+      toast("error", `Couldn’t save password: ${error.message}`);
+    } else {
+      setPassword("");
+      toast("ok", "Password saved. Use it with your email to sign in.");
+    }
+  }
+
   const deviceTz = deviceTimeZone();
 
   // Theme is per device: stored in localStorage and applied as data-theme on <html>.
@@ -195,6 +207,15 @@ export default function SettingsView({ ctx }: { ctx: PlannerCtx }) {
       <section className="card stack">
         <h2 className="section-title">Account</h2>
         <p>Signed in as <strong>{email}</strong></p>
+        <form onSubmit={savePassword} className="stack">
+          <label className="field">
+            <span>Set or change password</span>
+            <input type="password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
+          </label>
+          <div>
+            <button className="btn">Save password</button>
+          </div>
+        </form>
         <div>
           <button className="btn" onClick={async () => { await supabase.auth.signOut(); window.location.href = "/login"; }}>Sign out</button>
         </div>
