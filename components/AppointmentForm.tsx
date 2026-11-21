@@ -570,7 +570,7 @@ export default function AppointmentForm({
       {error && <div className="alert alert-error" role="alert">{error}</div>}
 
       <div className="form-actions">
-        <button type="submit" className="btn btn-primary" disabled={saving || activeTypes.length === 0}>
+        <button type="submit" className="btn btn-primary" disabled={saving}>
           {saving ? "Saving…" : review ? "Save remaining dates" : existing ? "Save changes" : "Save"}
         </button>
         <button type="button" className="btn btn-ghost" onClick={onCancel}>Cancel</button>
