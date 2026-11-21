@@ -3,9 +3,10 @@ import { useRef, useState } from "react";
 import { DateTime } from "luxon";
 import type { PlannerCtx } from "./usePlanner";
 import type { Task } from "@/lib/types";
+import type { Circle } from "@/lib/circles";
 import { hhmm, isTaskOverdue, localToDateTime, todayISO } from "@/lib/time";
 
-export default function TaskForm({ ctx, existing, date, onDone }: { ctx: PlannerCtx; existing?: Task; date?: string; onDone: () => void }) {
+export default function TaskForm({ ctx, circles, circleId: startCircle, existing, date, onDone }: { ctx: PlannerCtx; circles: Circle[]; circleId?: string; existing?: Task; date?: string; onDone: () => void }) {
   const { tz, supabase, refresh, toast } = ctx;
   const today = todayISO(tz);
   const tomorrow = DateTime.fromISO(today, { zone: tz }).plus({ days: 1 }).toISODate()!;
@@ -18,6 +19,8 @@ export default function TaskForm({ ctx, existing, date, onDone }: { ctx: Planner
   const [notifyDate, setNotifyDate] = useState(exNotify?.toISODate() ?? existing?.due_date ?? date ?? today);
   const [notifyTime, setNotifyTime] = useState(exNotify?.toFormat("HH:mm") ?? "");
   const [notes, setNotes] = useState(existing?.notes ?? "");
+  // Shared with this circle, or "" for private. New ones start in the circle being viewed.
+  const [circleId, setCircleId] = useState(existing ? existing.circle_id ?? "" : startCircle ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestId = useRef<string>(crypto.randomUUID());
@@ -45,7 +48,8 @@ export default function TaskForm({ ctx, existing, date, onDone }: { ctx: Planner
     }
     setSaving(true);
     setError(null);
-    const row = { title: title.trim(), due_date: due, due_time: dueTime || null, notify_at: notifyAt, notes: notes.trim() || null };
+    // circle_id is sent only when the database has the sharing columns.
+    const row = { title: title.trim(), due_date: due, due_time: dueTime || null, notify_at: notifyAt, notes: notes.trim() || null, ...(ctx.sharing ? { circle_id: circleId || null } : {}) };
     const { error } = existing
       ? await supabase.from("tasks").update(row).eq("id", existing.id)
       : await supabase.from("tasks").insert({ ...row, client_request_id: requestId.current });
@@ -91,6 +95,19 @@ export default function TaskForm({ ctx, existing, date, onDone }: { ctx: Planner
           <input type="date" aria-label="Due date" value={due} onChange={(e) => setDue(e.target.value)} className="input-inline" />
         </div>
       </fieldset>
+      {ctx.sharing && circles.length > 0 && (
+        <fieldset className="field">
+          <legend>Share with</legend>
+          <div className="chips chips-xs" style={{ marginTop: 0 }}>
+            <button type="button" className={`chip ${!circleId ? "is-selected" : ""}`} aria-pressed={!circleId} onClick={() => setCircleId("")}>Just me</button>
+            {circles.map((c) => (
+              <button type="button" key={c.id} className={`chip ${circleId === c.id ? "is-selected" : ""}`} aria-pressed={circleId === c.id} onClick={() => setCircleId(c.id)}>{c.name}</button>
+            ))}
+          </div>
+          {circleId && <span className="hint">Everyone in {circles.find((c) => c.id === circleId)?.name} can see this. Only you can change it.</span>}
+        </fieldset>
+      )}
+
       <label className="field">
         <span>Due time <span className="muted">(optional)</span></span>
         <div className="row">

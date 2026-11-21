@@ -2,10 +2,8 @@
 import { useEffect, useState } from "react";
 import type { PlannerCtx } from "./usePlanner";
 import type { CirclesState } from "./useCircles";
-import { expiryLabel, inviteLink, isOpen, type Circle } from "@/lib/circles";
+import { expiryLabel, inviteLink, isOpen, seatsOf, type Circle } from "@/lib/circles";
 
-// Member colours, from the activity palette, handed out in seat order.
-const COLORS = ["lilac", "sky", "sage", "amber", "rose", "teal", "clay", "slate"];
 const ROLE_LABEL = { owner: "Owner", member: "Member", viewer: "Viewer" } as const;
 
 // What an invite link resolves to, before the person decides.
@@ -100,11 +98,11 @@ export default function CirclesView({ ctx, state, linkToken, clearLink }: { ctx:
     const sent = invites.filter((i) => i.circle_id === c.id && isOpen(i));
     const d = draft?.circle === c.id ? draft : null;
     // Owner first, then by email, so each person keeps the same seat and colour between visits.
-    const members = [...c.circle_members].sort((a, b) => Number(b.role === "owner") - Number(a.role === "owner") || a.email.localeCompare(b.email));
+    const members = seatsOf(c);
     const seats = [
-      ...members.map((m) => ({ key: m.user_id, letter: m.email[0].toUpperCase(), pending: false, owner: m.role === "owner", draft: false })),
-      ...sent.map((i) => ({ key: i.id, letter: i.email?.[0].toUpperCase() ?? "?", pending: true, owner: false, draft: false })),
-      ...(d ? [{ key: "draft", letter: d.email.trim()[0]?.toUpperCase() ?? "+", pending: true, owner: false, draft: true }] : []),
+      ...members.map((m) => ({ key: m.user_id, letter: m.letter, color: m.color, pending: false, owner: m.role === "owner", draft: false })),
+      ...sent.map((i) => ({ key: i.id, letter: i.email?.[0].toUpperCase() ?? "?", color: "", pending: true, owner: false, draft: false })),
+      ...(d ? [{ key: "draft", letter: d.email.trim()[0]?.toUpperCase() ?? "+", color: "", pending: true, owner: false, draft: true }] : []),
     ];
     return (
       <section key={c.id} className="card stack">
@@ -115,7 +113,7 @@ export default function CirclesView({ ctx, state, linkToken, clearLink }: { ctx:
             {seats.slice(0, 8).map((seat, n) => (
               <span
                 key={seat.key}
-                className={`orbit-seat ${seat.pending ? "is-pending" : `act-${COLORS[n % COLORS.length]}`} ${seat.owner ? "is-owner" : ""} ${seat.draft ? "is-draft" : ""}`}
+                className={`orbit-seat ${seat.pending ? "is-pending" : `act-${seat.color}`} ${seat.owner ? "is-owner" : ""} ${seat.draft ? "is-draft" : ""}`}
                 style={{ ["--i" as string]: n }}
               >
                 {seats.length > 8 && n === 7 ? `+${seats.length - 7}` : seat.letter}
@@ -133,9 +131,9 @@ export default function CirclesView({ ctx, state, linkToken, clearLink }: { ctx:
         </div>
 
         <ul className="list circle-people">
-          {members.map((m, n) => (
+          {members.map((m) => (
             <li key={m.user_id} className="list-row">
-              <span className={`avatar avatar-sm act-${COLORS[n % COLORS.length]}`} aria-hidden>{m.email[0].toUpperCase()}</span>
+              <span className={`avatar avatar-sm act-${m.color}`} aria-hidden>{m.letter}</span>
               <span className="grow circle-who">
                 <span className="circle-email">{m.email}</span>
                 <span className="muted">{ROLE_LABEL[m.role]}{m.user_id === userId ? ", you" : ""}</span>

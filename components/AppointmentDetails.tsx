@@ -6,15 +6,17 @@ import type { Appointment } from "@/lib/types";
 import { REMINDER_CHOICES } from "@/lib/types";
 import { fmtRange } from "@/lib/time";
 import { isOverlapError } from "@/lib/conflicts";
+import type { Circle } from "@/lib/circles";
 
 const Icon = ({ d }: { d: string }) => (
   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d={d} /></svg>
 );
 
 export default function AppointmentDetails({
-  ctx, appt, onEdit, onClose,
+  ctx, circles, appt, onEdit, onClose,
 }: {
   ctx: PlannerCtx;
+  circles: Circle[];
   appt: Appointment;
   onEdit: () => void;
   onClose: () => void;
@@ -55,6 +57,9 @@ export default function AppointmentDetails({
     toast("ok", "Notes saved");
   }
   const t = typeById.get(appt.activity_type_id ?? "");
+  const mine = appt.user_id === ctx.userId; // only the creator can change it
+  const sharedIn = circles.find((c) => c.id === appt.circle_id);
+  const by = sharedIn?.circle_members.find((m) => m.user_id === appt.user_id)?.email;
   const p = appt.place_id ? placeById.get(appt.place_id) : null;
   const start = DateTime.fromISO(appt.starts_at).setZone(tz);
   const reminderLabel =
@@ -105,7 +110,7 @@ export default function AppointmentDetails({
       </div>
 
       {/* Did it happen? Two switches; pressing the lit one again clears the mark. */}
-      {appt.status !== "cancelled" && (
+      {mine && appt.status !== "cancelled" && (
         <div className="outcome">
           <div className="outcome-toggle" role="group" aria-label="Did this appointment happen?">
             <button className={`outcome-btn is-done ${appt.outcome === "done" ? "is-on" : ""}`} aria-pressed={appt.outcome === "done"} disabled={busy} onClick={() => { setReason(null); setOutcome(appt.outcome === "done" ? null : "done"); }}>
@@ -165,17 +170,23 @@ export default function AppointmentDetails({
           ) : appt.notes ? (
             <>
               <div className="note-block">{appt.notes}</div>
-              <button className="link" onClick={() => setNote(appt.notes ?? "")}>Edit notes</button>
+              {mine && <button className="link" onClick={() => setNote(appt.notes ?? "")}>Edit notes</button>}
             </>
-          ) : (
+          ) : mine ? (
             <button className="link" onClick={() => setNote("")}>Add notes</button>
+          ) : (
+            <span className="muted">No notes</span>
           )}
         </dd>
       </dl>
 
+      {/* Who can see it, and whose it is. */}
+      {sharedIn && <p className="hint">Shared with {sharedIn.name}{mine ? ". Everyone in it can see this." : `, added by ${by ?? "another member"}. Only they can change it.`}</p>}
+      {!mine && appt.outcome && <p className="hint">Marked {appt.outcome === "done" ? "done" : "not done"}{appt.outcome_reason ? `: ${appt.outcome_reason}` : ""}.</p>}
+
       {error && <div className="alert alert-error" role="alert">{error}</div>}
 
-      <div className="form-actions">
+      {mine && <div className="form-actions">
         {appt.status !== "cancelled" ? (
           <>
             <button className="btn btn-primary" onClick={onEdit}>Edit</button>
@@ -195,7 +206,7 @@ export default function AppointmentDetails({
         ) : (
           <button className="btn" disabled={busy} onClick={restore}>Restore appointment</button>
         )}
-      </div>
+      </div>}
     </div>
   );
 }

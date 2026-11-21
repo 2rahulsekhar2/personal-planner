@@ -38,3 +38,18 @@ export function expiryLabel(expiresAt: string, now = Date.now()): string {
 }
 
 export const inviteLink = (token: string) => `${window.location.origin}/?invite=${token}`;
+
+// Member colours, from the activity palette, handed out in seat order.
+const SEAT_COLORS = ["lilac", "sky", "sage", "amber", "rose", "teal", "clay", "slate"];
+
+export interface Seat extends CircleMember {
+  color: string;
+  letter: string;
+}
+
+/** Members in seat order (owner first, then by email), each with a stable colour and initial. */
+export function seatsOf(c: Circle): Seat[] {
+  return [...c.circle_members]
+    .sort((a, b) => Number(b.role === "owner") - Number(a.role === "owner") || a.email.localeCompare(b.email))
+    .map((m, n) => ({ ...m, color: SEAT_COLORS[n % SEAT_COLORS.length], letter: m.email[0].toUpperCase() }));
+}

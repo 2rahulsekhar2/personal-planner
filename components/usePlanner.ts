@@ -6,8 +6,8 @@ import { deviceTimeZone } from "@/lib/time";
 import type { ActivityType, Appointment, Place, Profile, Task } from "@/lib/types";
 
 export const APPT_FIELDS =
-  "id, activity_type_id, place_id, series_id, title, starts_at, ends_at, status, team, notes, reminder_minutes";
-export const TASK_FIELDS = "id, title, due_date, due_time, notify_at, notes, state, completed_at";
+  "id, user_id, activity_type_id, place_id, series_id, title, starts_at, ends_at, status, team, notes, reminder_minutes";
+export const TASK_FIELDS = "id, user_id, title, due_date, due_time, notify_at, notes, state, completed_at";
 
 export interface Toast {
   id: number;
@@ -18,6 +18,12 @@ export interface Toast {
 export function usePlanner() {
   const supabase = supabaseBrowser();
   const [email, setEmail] = useState<string | null>(null);
+  const [userId, setUserId] = useState<string | null>(null);
+  // Every activity type and place this user can read: their own, plus those on appointments shared with their circles.
+  const [allTypes, setAllTypes] = useState<ActivityType[]>([]);
+  const [allPlaces, setAllPlaces] = useState<Place[]>([]);
+  // True once the database is known to have the sharing columns (0006_sharing.sql). Until then nothing offers or sends circle_id.
+  const [sharing, setSharing] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [types, setTypes] = useState<ActivityType[]>([]);
   const [places, setPlaces] = useState<Place[]>([]);
@@ -44,18 +50,19 @@ export function usePlanner() {
       return;
     }
     setEmail(auth.user.email ?? null);
+    setUserId(auth.user.id);
+    const uid = auth.user.id;
     const since = DateTime.now().minus({ days: 60 }).toISODate();
-    const [p, t, pl, tk] = await Promise.all([
+    const loadTasks = (fields: string) =>
+      supabase.from("tasks").select(fields).or(`state.eq.pending,due_date.gte.${since}`).order("due_date").order("due_time", { nullsFirst: true });
+    let [p, t, pl, tk] = await Promise.all([
       supabase.from("profiles").select("user_id, time_zone, default_reminder_minutes, show_cancelled").maybeSingle(),
-      supabase.from("activity_types").select("id, name, color, archived_at").order("name"),
-      supabase.from("places").select("id, name, maps_url, notes, archived_at").order("name"),
-      supabase
-        .from("tasks")
-        .select(TASK_FIELDS)
-        .or(`state.eq.pending,due_date.gte.${since}`)
-        .order("due_date")
-        .order("due_time", { nullsFirst: true }),
+      supabase.from("activity_types").select("id, user_id, name, color, archived_at").order("name"),
+      supabase.from("places").select("id, user_id, name, maps_url, notes, archived_at").order("name"),
+      loadTasks(`${TASK_FIELDS}, circle_id`),
     ]);
+    // 42703 = unknown column: the sharing migration has not been run yet.
+    if (tk.error?.code === "42703") tk = await loadTasks(TASK_FIELDS);
     const err = p.error || t.error || pl.error || tk.error;
     if (err) {
       setLoadError(err.message);
@@ -76,9 +83,14 @@ export function usePlanner() {
       prof = { ...prof, time_zone: tzNow };
     }
     setProfile(prof);
-    setTypes((t.data ?? []) as ActivityType[]);
-    setPlaces((pl.data ?? []) as Place[]);
-    setTasks((tk.data ?? []) as Task[]);
+    const readableTypes = (t.data ?? []) as ActivityType[];
+    const readablePlaces = (pl.data ?? []) as Place[];
+    setAllTypes(readableTypes);
+    setAllPlaces(readablePlaces);
+    // The lists and pickers only ever offer the user's own.
+    setTypes(readableTypes.filter((x) => x.user_id === uid));
+    setPlaces(readablePlaces.filter((x) => x.user_id === uid));
+    setTasks((tk.data ?? []) as unknown as Task[]);
     setLoadError(null);
   }, [supabase]);
 
@@ -87,7 +99,9 @@ export function usePlanner() {
       const query = (fields: string) =>
         supabase.from("appointments").select(fields).lt("starts_at", r.to).gt("ends_at", r.from).order("starts_at");
       // 42703 = unknown column: a later migration has not been run yet. Fall back to fewer columns so the calendar still works.
-      let { data, error } = await query(`${APPT_FIELDS}, outcome, outcome_reason, custom_activity, custom_place`);
+      let { data, error } = await query(`${APPT_FIELDS}, outcome, outcome_reason, custom_activity, custom_place, circle_id`);
+      setSharing(!error);
+      if (error?.code === "42703") ({ data, error } = await query(`${APPT_FIELDS}, outcome, outcome_reason, custom_activity, custom_place`));
       if (error?.code === "42703") ({ data, error } = await query(`${APPT_FIELDS}, outcome, outcome_reason`));
       if (error?.code === "42703") ({ data, error } = await query(APPT_FIELDS));
       if (error) {
@@ -136,12 +150,14 @@ export function usePlanner() {
     [supabase, toast, refresh],
   );
 
-  const typeById = useMemo(() => new Map(types.map((t) => [t.id, t])), [types]);
-  const placeById = useMemo(() => new Map(places.map((p) => [p.id, p])), [places]);
+  const typeById = useMemo(() => new Map(allTypes.map((t) => [t.id, t])), [allTypes]);
+  const placeById = useMemo(() => new Map(allPlaces.map((p) => [p.id, p])), [allPlaces]);
 
   return {
     supabase,
     email,
+    userId,
+    sharing,
     profile,
     setProfile,
     tz,
