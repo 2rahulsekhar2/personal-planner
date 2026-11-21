@@ -213,3 +213,30 @@ describe("/api/push/test", () => {
     expect(mocks.sendToUser).toHaveBeenCalledWith(admin, "u1", expect.objectContaining({ tag: "test" }));
   });
 });
+
+describe("POST /auth/exists", () => {
+  const ask = async (email: unknown) => {
+    const { POST } = await import("@/app/auth/exists/route");
+    const res = await POST(new Request("http://x/auth/exists", { method: "POST", body: JSON.stringify({ email }) }));
+    return { status: res.status, body: await res.json() };
+  };
+  const users = (list: string[]) =>
+    mocks.supabaseAdmin.mockReturnValue({
+      auth: { admin: { listUsers: async () => ({ data: { users: list.map((email) => ({ email })) }, error: null }) } },
+    });
+
+  it("finds a registered email whatever its case", async () => {
+    users(["me@example.com"]);
+    expect(await ask(" Me@Example.com ")).toEqual({ status: 200, body: { exists: true } });
+  });
+
+  it("reports an unknown email as not registered", async () => {
+    users(["me@example.com"]);
+    expect(await ask("new@example.com")).toEqual({ status: 200, body: { exists: false } });
+  });
+
+  it("rejects a request without an email", async () => {
+    users([]);
+    expect((await ask(undefined)).status).toBe(400);
+  });
+});
