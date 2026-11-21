@@ -191,11 +191,12 @@ export default function WeekView({
                 {iso === today && nowTop >= 0 && nowTop <= hours.length * HOUR_PX && <div className="now-line" style={{ top: nowTop }} aria-hidden />}
                 {dayTasks.map(({ t, top }) => <TaskChip key={t.id} task={t} tz={tz} top={top} onOpen={() => onOpenTask(t.id)} />)}
                 {segs.map((s) => {
-                  const t = typeById.get(s.appt.activity_type_id);
+                  const t = typeById.get(s.appt.activity_type_id ?? "");
                   const p = s.appt.place_id ? placeById.get(s.appt.place_id) : null;
                   // What fits: under 30px one line; taller cards add the place, then the end time at the bottom edge.
                   const compact = s.height < 30;
-                  const showPlace = !!p && s.height > 50;
+                  const placeName = p?.name ?? s.appt.custom_place;
+                  const showPlace = !!placeName && s.height > 50;
                   const showEnd = s.height > 66;
                   const titleLines = Math.max(1, Math.floor((s.height - 19 - (showPlace ? 11 : 0) - (showEnd ? 11 : 0)) / 12));
                   return (
@@ -204,7 +205,7 @@ export default function WeekView({
                       className={`appt act-${t?.color ?? "slate"} status-${s.appt.status} ${s.appt.outcome ? `outcome-${s.appt.outcome}` : ""} ${compact ? "is-compact" : ""}`}
                       style={{ top: s.top, height: s.height - 2, left: `calc(${(s.lane / s.lanes) * 100}% + 2px)`, width: `calc(${100 / s.lanes}% - 4px)` }}
                       onClick={() => onOpen(s.appt.id)}
-                      title={`${s.appt.title}, ${fmtRange(s.appt.starts_at, s.appt.ends_at, tz)}${p ? `, ${p.name}` : ""}`}
+                      title={`${s.appt.title}, ${fmtRange(s.appt.starts_at, s.appt.ends_at, tz)}${placeName ? `, ${placeName}` : ""}`}
                     >
                       <span className="appt-time">{fmtShortTime(s.appt.starts_at, tz)}</span>
                       <span className="appt-title" style={compact ? undefined : { WebkitLineClamp: titleLines }}>
@@ -215,7 +216,7 @@ export default function WeekView({
                       {showPlace && (
                         <span className="appt-place">
                           <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor" aria-hidden><path d="M12 22s-7-6-7-12a7 7 0 0 1 14 0c0 6-7 12-7 12zm0-9.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z" /></svg>
-                          {p!.name}
+                          {placeName}
                         </span>
                       )}
                       {showEnd && <span className="appt-end">until {fmtShortTime(s.appt.ends_at, tz)}</span>}

@@ -38,3 +38,17 @@ describe("spec section 6.1 conflict table", () => {
     expect(findConflicts(appt("x", CRICKET, 8, 10), existing).blocking).toHaveLength(0);
   });
 });
+
+describe("one-off custom activities (no activity type)", () => {
+  const custom = (id: string, s: number, e: number) => ({ id, activity_type_id: null, starts_at: at(s), ends_at: at(e), status: "confirmed" });
+  it("never block each other, but still warn about the overlap", () => {
+    const r = findConflicts(custom("n", 8, 10), [custom("x", 7, 9)]);
+    expect(r.blocking).toHaveLength(0);
+    expect(r.warnings).toHaveLength(1);
+  });
+  it("warn, not block, against a typed appointment", () => {
+    const r = findConflicts(custom("n", 8, 10), existing);
+    expect(r.blocking).toHaveLength(0);
+    expect(r.warnings).toHaveLength(1);
+  });
+});

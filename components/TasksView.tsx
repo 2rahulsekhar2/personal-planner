@@ -6,7 +6,7 @@ import type { Task } from "@/lib/types";
 import { fmtClock, isTaskOverdue, relativeDayLabel } from "@/lib/time";
 
 export default function TasksView({ ctx, onOpen, onNew }: { ctx: PlannerCtx; onOpen: (id: string) => void; onNew: () => void }) {
-  const { tasks, tz, supabase, refresh, toast } = ctx;
+  const { tasks, tz } = ctx;
   const [showDone, setShowDone] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
 
@@ -17,11 +17,8 @@ export default function TasksView({ ctx, onOpen, onNew }: { ctx: PlannerCtx; onO
   async function complete(t: Task) {
     if (busy) return;
     setBusy(t.id);
-    const { error } = await supabase.from("tasks").update({ state: "completed", completed_at: new Date().toISOString() }).eq("id", t.id);
+    await ctx.completeTask(t);
     setBusy(null);
-    if (error) return toast("error", `Couldn’t update: ${error.message}`);
-    await refresh();
-    toast("ok", `Done: ${t.title}`);
   }
 
   const Row = ({ t }: { t: Task }) => {

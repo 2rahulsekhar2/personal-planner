@@ -64,7 +64,7 @@ export default function WeekSidebar({
         </div>
         {appts.length === 0 && <p className="empty">Nothing booked.</p>}
         {appts.map((a) => (
-          <button key={a.id} className={`side-row act-${typeById.get(a.activity_type_id)?.color ?? "slate"}`} onClick={() => onOpen(a.id)}>
+          <button key={a.id} className={`side-row act-${typeById.get(a.activity_type_id ?? "")?.color ?? "slate"}`} onClick={() => onOpen(a.id)}>
             <span className="swatch" aria-hidden />
             <span className="grow">{a.title}</span>
             <span className="muted">{fmtRange(a.starts_at, a.ends_at, tz)}</span>
