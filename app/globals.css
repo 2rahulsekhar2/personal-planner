@@ -157,7 +157,7 @@ button.brand { display: inline-flex; align-items: center; gap: 8px; border: 0; b
 .add-tile .add-icon { margin-bottom: 8px; background: var(--accent); color: var(--accent-ink); }
 .add-tile .count { position: absolute; top: 10px; right: 10px; margin: 0; }
 /* Tier two: the lists appointments draw on. Quiet, side by side, under a rule. */
-.add-support { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--line); }
+.add-support { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-top: 4px; padding-top: 6px; border-top: 1px solid var(--line); }
 .add-mini { position: relative; display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 8px 4px 7px; border: 0; border-radius: 12px; background: none; color: var(--ink-2); cursor: pointer; }
 .add-mini .count { position: absolute; top: 2px; right: 14px; margin: 0; }
 .add-mini:hover, .add-mini:focus-visible { background: var(--surface-2); }

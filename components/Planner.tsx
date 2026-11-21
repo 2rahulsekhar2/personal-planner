@@ -18,11 +18,12 @@ import { useNotificationStatus, STATUS_LABEL } from "./NotificationBadge";
 import AccountMenu from "./AccountMenu";
 import { useDismiss } from "./useDismiss";
 import CirclesView from "./CirclesView";
+import ActivityView from "./ActivityView";
 import { useCircles } from "./useCircles";
 import { isOpen, seatsOf } from "@/lib/circles";
 import { registerServiceWorker } from "@/lib/push-client";
 
-export type View = "week" | "agenda" | "tasks" | "types" | "places" | "settings" | "circles";
+export type View = "week" | "agenda" | "tasks" | "types" | "places" | "settings" | "circles" | "activity";
 
 export type PanelState =
   | { kind: "new-appt"; typeId?: string; date?: string; start?: string; end?: string }
@@ -43,7 +44,7 @@ function ViewToggle({ view, onChange }: { view: View; onChange: (v: View) => voi
   );
 }
 
-type AddKey = "event" | "task" | "activity" | "place" | "circles";
+type AddKey = "event" | "task" | "activity" | "place" | "circles" | "log";
 // The Add menu has two tiers: what goes on the calendar (appointment, task), then what those draw on:
 // your activities, your places, and the circles of people you plan with.
 const ADD_ITEMS: { key: AddKey; label: string; hint?: string; icon: React.ReactNode }[] = [
@@ -52,6 +53,7 @@ const ADD_ITEMS: { key: AddKey; label: string; hint?: string; icon: React.ReactN
   { key: "activity", label: "Activities", icon: <><path d="M3 12V4.5A1.5 1.5 0 0 1 4.5 3H12l9 9-8.5 8.5a1.5 1.5 0 0 1-2.1 0L3 12z" /><circle cx="7.5" cy="7.5" r="1.2" /></> },
   { key: "place", label: "Places", icon: <><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z" /><circle cx="12" cy="10" r="2.3" /></> },
   { key: "circles", label: "Circles", icon: <path d="M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2.5 20a6.5 6.5 0 0 1 13 0M16.5 11a3 3 0 1 0 0-6M17.5 14.6a5.5 5.5 0 0 1 4 5.4" /> },
+  { key: "log", label: "History", icon: <path d="M3 12h4l3-8 4 16 3-8h4" /> },
 ];
 
 export default function Planner() {
@@ -158,7 +160,7 @@ export default function Planner() {
   const pick = (key: AddKey) => {
     if (key === "event") return setPanel({ kind: "new-appt" });
     setPanel(key === "task" ? { kind: "new-task" } : null);
-    setView(key === "task" ? "tasks" : key === "activity" ? "types" : key === "circles" ? "circles" : "places");
+    setView(key === "task" ? "tasks" : key === "activity" ? "types" : key === "circles" ? "circles" : key === "log" ? "activity" : "places");
   };
 
   let panelBody: React.ReactNode = null;
@@ -274,6 +276,7 @@ export default function Planner() {
           {view === "places" && <PlacesView ctx={ctx} />}
           {view === "settings" && <SettingsView ctx={ctx} />}
           {view === "circles" && <CirclesView ctx={ctx} state={circles} linkToken={inviteToken} clearLink={() => setInviteToken(null)} />}
+          {view === "activity" && <ActivityView ctx={ctx} circles={circles.circles} />}
         </section>
         {panel && (
           <Panel title={panelTitle} onClose={closePanel}>
