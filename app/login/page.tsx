@@ -52,13 +52,19 @@ export default function LoginPage() {
 
   const auth = () => supabaseBrowser().auth;
 
+  // Supabase doesn't say when the email limit resets, so the wait is the worst case of its hourly window.
+  const say = (error: { code?: string; message: string }) =>
+    error.code === "over_email_send_rate_limit"
+      ? "Too many emails sent. Wait up to 60 minutes and try again, or sign in with Google."
+      : error.message;
+
   const google = () =>
     run(async () => {
       const { error } = await auth().signInWithOAuth({
         provider: "google",
         options: { redirectTo: `${window.location.origin}/auth/callback` },
       });
-      if (error) return error.message;
+      if (error) return say(error);
     });
 
   const signIn = () =>
@@ -73,7 +79,7 @@ export default function LoginPage() {
         go("verify", "This email isn’t verified yet. We sent a new code.");
         return;
       }
-      if (error.code !== "invalid_credentials") return error.message;
+      if (error.code !== "invalid_credentials") return say(error);
       // Supabase gives the same error for an unknown email and a wrong password; ask the server which it is.
       const res = await fetch("/auth/exists", { method: "POST", body: JSON.stringify({ email }) });
       const { exists } = await res.json();
@@ -89,7 +95,7 @@ export default function LoginPage() {
       if (password.length < 8) return "Use at least 8 characters for the password.";
       if (password !== confirm) return "The two passwords don’t match.";
       const { data, error } = await auth().signUp({ email, password });
-      if (error) return error.message;
+      if (error) return say(error);
       // Supabase returns a user with no identities when the email is already registered.
       if (data.user?.identities?.length === 0) {
         go("signin", `${email} already has an account. Sign in instead.`);
@@ -112,20 +118,20 @@ export default function LoginPage() {
   const resend = () =>
     run(async () => {
       const { error } = await auth().resend({ type: "signup", email });
-      if (error) return error.message;
+      if (error) return say(error);
       setNotice(`New code sent to ${email}.`);
     });
 
-  // Recovery for accounts without a password: sign in by link, then set one in Settings.
+  // Recovery also covers accounts without a password: the link signs in and opens the password setting.
   const forgot = () =>
     run(async () => {
       if (!email) return "Enter your email first.";
       const { error } = await auth().signInWithOtp({
         email,
-        options: { shouldCreateUser: false, emailRedirectTo: `${window.location.origin}/auth/callback` },
+        options: { shouldCreateUser: false, emailRedirectTo: `${window.location.origin}/auth/callback?next=password` },
       });
-      if (error) return error.message;
-      setNotice(`Sign-in link sent to ${email}. Open it, then set a new password in Settings.`);
+      if (error) return say(error);
+      setNotice(`Link sent to ${email}. Open it to set a new password.`);
     });
 
   const submit = (action: () => void) => (e: React.FormEvent) => {

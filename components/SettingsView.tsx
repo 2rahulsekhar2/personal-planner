@@ -91,6 +91,11 @@ export default function SettingsView({ ctx }: { ctx: PlannerCtx }) {
   }
 
   const [password, setPassword] = useState("");
+  // Set when arriving from a password-reset link (/?password); the flag is then dropped from the URL.
+  const [resetting] = useState(() => new URLSearchParams(window.location.search).has("password"));
+  useEffect(() => {
+    if (resetting) window.history.replaceState(null, "", "/");
+  }, [resetting]);
   async function savePassword(e: React.FormEvent) {
     e.preventDefault();
     const { error } = await supabase.auth.updateUser({ password });
@@ -209,8 +214,8 @@ export default function SettingsView({ ctx }: { ctx: PlannerCtx }) {
         <p>Signed in as <strong>{email}</strong></p>
         <form onSubmit={savePassword} className="stack">
           <label className="field">
-            <span>Set or change password</span>
-            <input type="password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
+            <span>{resetting ? "Choose a new password" : "Set or change password"}</span>
+            <input type="password" autoFocus={resetting} required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
           </label>
           <div>
             <button className="btn">Save password</button>
