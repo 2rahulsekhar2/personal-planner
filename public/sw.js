@@ -15,7 +15,7 @@ self.addEventListener("push", (event) => {
       body: data.body || "",
       tag: data.tag || undefined,
       icon: "/icon-192.png",
-      badge: "/icon-192.png",
+      badge: "/badge-96.png", // white-on-transparent: Android tints the badge and ignores colour
       data: { url: data.url || "/" },
     }),
   );
