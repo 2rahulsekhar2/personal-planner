@@ -1,10 +1,12 @@
 "use client";
+import { useLayoutEffect, useRef, useState } from "react";
 import { DateTime } from "luxon";
 import type { PlannerCtx } from "./usePlanner";
 import type { Appointment, Task } from "@/lib/types";
-import { fmtRange, fmtShortTime, startOfWeek, todayISO, fmtClock, isTaskOverdue } from "@/lib/time";
+import { fmtRange, fmtShortTime, weekFromToday, todayISO, fmtClock, isTaskOverdue } from "@/lib/time";
 
-const HOUR_PX = 48;
+const TASK_PX = 18; // height a task chip takes in the grid, including its gap
+const MIN_APPT_PX = 15; // shortest an appointment is drawn, so it stays readable and tappable
 
 interface Segment {
   appt: Appointment;
@@ -19,7 +21,7 @@ export function visibleAppointments(ctx: PlannerCtx) {
   return ctx.appointments.filter((a) => a.status !== "cancelled" || ctx.profile?.show_cancelled);
 }
 
-function layoutDay(appts: Appointment[], dayStart: DateTime, gridStartHour: number, gridEndHour: number): Segment[] {
+function layoutDay(appts: Appointment[], dayStart: DateTime, gridStartHour: number, gridEndHour: number, HOUR_PX: number): Segment[] {
   const dayEnd = dayStart.plus({ days: 1 });
   const raw = appts
     .map((a) => {
@@ -30,7 +32,7 @@ function layoutDay(appts: Appointment[], dayStart: DateTime, gridStartHour: numb
       const ce = e > dayEnd ? dayEnd : e;
       const startMin = Math.max(cs.diff(dayStart, "minutes").minutes, gridStartHour * 60);
       const endMin = Math.min(ce.diff(dayStart, "minutes").minutes, gridEndHour * 60);
-      return { appt: a, startMin, endMin: Math.max(endMin, startMin + 20), continues: e > dayEnd };
+      return { appt: a, startMin, endMin: Math.max(endMin, startMin + (MIN_APPT_PX / HOUR_PX) * 60), continues: e > dayEnd };
     })
     .filter((x): x is NonNullable<typeof x> => !!x)
     .sort((a, b) => a.startMin - b.startMin || b.endMin - a.endMin);
@@ -68,10 +70,10 @@ function layoutDay(appts: Appointment[], dayStart: DateTime, gridStartHour: numb
   return out;
 }
 
-export function TaskChip({ task, tz, onOpen }: { task: Task; tz: string; onOpen: () => void }) {
+export function TaskChip({ task, tz, onOpen, top }: { task: Task; tz: string; onOpen: () => void; top?: number }) {
   const overdue = isTaskOverdue(task, tz);
   return (
-    <button className={`task-chip ${task.state !== "pending" ? "is-done" : ""} ${overdue ? "is-overdue" : ""}`} onClick={onOpen}>
+    <button className={`task-chip ${task.state !== "pending" ? "is-done" : ""} ${overdue ? "is-overdue" : ""}`} style={top === undefined ? undefined : { top }} onClick={onOpen}>
       <span className="task-box" aria-hidden>{task.state === "completed" ? "✓" : ""}</span>
       <span className="task-chip-title">{task.title}</span>
       {task.due_time && <span className="task-chip-time">{fmtClock(task.due_time)}</span>}
@@ -81,7 +83,7 @@ export function TaskChip({ task, tz, onOpen }: { task: Task; tz: string; onOpen:
 }
 
 export default function WeekView({
-  ctx, day, setDay, onOpen, onOpenTask, onCreate, overdueCount, showTasks,
+  ctx, day, setDay, onOpen, onOpenTask, onCreate, toggle,
 }: {
   ctx: PlannerCtx;
   day: string;
@@ -89,48 +91,54 @@ export default function WeekView({
   onOpen: (id: string) => void;
   onOpenTask: (id: string) => void;
   onCreate: (date: string, start: string, end: string) => void;
-  overdueCount: number;
-  showTasks: () => void;
+  toggle: React.ReactNode;
 }) {
   const { tz, typeById, placeById, tasks } = ctx;
-  const ws = startOfWeek(day, tz);
+  const ws = weekFromToday(day, tz);
   const days = Array.from({ length: 7 }, (_, i) => ws.plus({ days: i }));
+
   const today = todayISO(tz);
   const appts = visibleAppointments(ctx);
 
-  // Grid spans 6 AM–11 PM, widened to fit anything earlier or later.
-  let startHour = 6;
-  let endHour = 23;
-  for (const a of appts) {
-    const s = DateTime.fromISO(a.starts_at).setZone(tz);
-    const e = DateTime.fromISO(a.ends_at).setZone(tz);
-    if (s >= ws && s < ws.plus({ days: 7 })) startHour = Math.min(startHour, s.hour);
-    if (e.hasSame(s, "day")) endHour = Math.max(endHour, e.minute ? e.hour + 1 : e.hour);
-    else endHour = 24;
-  }
+  // The grid shows the whole day, midnight to midnight.
+  const startHour = 0;
+  const endHour = 24;
   const hours = Array.from({ length: endHour - startHour }, (_, i) => startHour + i);
   const nowL = DateTime.now().setZone(tz);
+  // The whole day fits the window: each hour gets an equal share of the height left under the day headers.
+  const gridRef = useRef<HTMLDivElement>(null);
+  const [HOUR_PX, setHourPx] = useState(24);
+  useLayoutEffect(() => {
+    const fit = () => {
+      const col = gridRef.current?.querySelector(".week-col");
+      const content = gridRef.current?.closest(".content");
+      if (!col || !content) return;
+      const top = col.getBoundingClientRect().top + window.scrollY;
+      const reserved = parseFloat(getComputedStyle(content).paddingBottom) + 6; // the content padding, plus a little air
+      setHourPx(Math.max(14, Math.floor(((window.innerHeight - top - reserved) / 24) * 10) / 10));
+    };
+    fit();
+    window.addEventListener("resize", fit);
+    return () => window.removeEventListener("resize", fit);
+  }, []);
   const nowTop = ((nowL.hour * 60 + nowL.minute - startHour * 60) / 60) * HOUR_PX;
 
-  const bandFor = (h: number) => (h < 12 ? "morning" : h < 17 ? "afternoon" : "evening");
+
+  // "21 – 27 Nov", or "28 Nov – 4 Dec" across months; the year only when it is not this year.
+  const we = ws.plus({ days: 6 });
+  const rangeLabel = `${ws.toFormat(ws.month === we.month ? "d" : "d LLL")} – ${we.toFormat(we.year === nowL.year ? "d LLL" : "d LLL yyyy")}`;
 
   return (
     <div className="week">
-      <div className="toolbar">
-        <div className="toolbar-group">
-          <button className="btn" onClick={() => setDay(ws.minus({ weeks: 1 }).toISODate()!)} aria-label="Previous week">‹</button>
-          <button className="btn" onClick={() => setDay(today)}>Today</button>
-          <button className="btn" onClick={() => setDay(ws.plus({ weeks: 1 }).toISODate()!)} aria-label="Next week">›</button>
-        </div>
-        <h1 className="toolbar-title">
-          {ws.toFormat("d LLL")} – {ws.plus({ days: 6 }).toFormat(ws.month === ws.plus({ days: 6 }).month ? "d LLL yyyy" : "d LLL yyyy")}
-        </h1>
-        <button className={`btn btn-ghost ${overdueCount ? "has-alert" : ""}`} onClick={showTasks}>
-          {overdueCount ? `${overdueCount} overdue task${overdueCount > 1 ? "s" : ""}` : "Tasks"}
-        </button>
+      <div className="toolbar toolbar-compact">
+        <button className="btn btn-sm btn-ghost" onClick={() => setDay(ws.minus({ weeks: 1 }).toISODate()!)} aria-label="Previous week">‹</button>
+        <h1 className="toolbar-title">{rangeLabel}</h1>
+        <button className="btn btn-sm btn-ghost" onClick={() => setDay(ws.plus({ weeks: 1 }).toISODate()!)} aria-label="Next week">›</button>
+        <button className="btn btn-sm btn-ghost toolbar-end" onClick={() => setDay(today)}>Today</button>
+        {toggle}
       </div>
 
-      <div className="week-scroll">
+      <div className="week-scroll" ref={gridRef}>
         <div className="week-grid" style={{ ["--hours" as string]: hours.length, ["--hour-px" as string]: `${HOUR_PX}px` }}>
           <div className="week-corner" />
           {days.map((d) => {
@@ -145,28 +153,27 @@ export default function WeekView({
             );
           })}
 
-          <div className="week-taskhead">Tasks</div>
-          {days.map((d) => {
-            const iso = d.toISODate()!;
-            const dayTasks = tasks.filter((t) => t.due_date === iso && t.state !== "dismissed");
-            return (
-              <div key={iso} className={`week-tasks ${iso === today ? "is-today" : ""}`}>
-                {dayTasks.map((t) => <TaskChip key={t.id} task={t} tz={tz} onOpen={() => onOpenTask(t.id)} />)}
-              </div>
-            );
-          })}
-
           <div className="week-hours">
             {hours.map((h) => (
-              <div key={h} className={`hour-label band-${bandFor(h)}`}>
-                {(h === startHour || h === 12 || h === 17) && <span className="band-name">{bandFor(h)}</span>}
+              <div key={h} className="hour-label">
                 <span>{DateTime.fromObject({ hour: h }).toFormat("h a")}</span>
               </div>
             ))}
           </div>
           {days.map((d) => {
             const iso = d.toISODate()!;
-            const segs = layoutDay(appts, d.startOf("day"), startHour, endHour);
+            const segs = layoutDay(appts, d.startOf("day"), startHour, endHour, HOUR_PX);
+            // Tasks sit at their due time; ones without a time start the day. Each is pushed below the previous so none overlap.
+            let free = 0;
+            const dayTasks = tasks
+              .filter((t) => t.due_date === iso && t.state !== "dismissed")
+              .map((t) => ({ t, at: t.due_time ? (Number(t.due_time.slice(0, 2)) + Number(t.due_time.slice(3, 5)) / 60) * HOUR_PX : 0 }))
+              .sort((a, b) => a.at - b.at)
+              .map(({ t, at }) => {
+                const top = Math.max(at, free);
+                free = top + TASK_PX;
+                return { t, top };
+              });
             return (
               <div
                 key={iso}
@@ -180,29 +187,38 @@ export default function WeekView({
                 }}
                 aria-label={`${d.toFormat("cccc d LLLL")}`}
               >
-                {hours.map((h) => <div key={h} className={`hour-cell band-${bandFor(h)}`} aria-hidden />)}
+                {hours.map((h) => <div key={h} className="hour-cell" aria-hidden />)}
                 {iso === today && nowTop >= 0 && nowTop <= hours.length * HOUR_PX && <div className="now-line" style={{ top: nowTop }} aria-hidden />}
+                {dayTasks.map(({ t, top }) => <TaskChip key={t.id} task={t} tz={tz} top={top} onOpen={() => onOpenTask(t.id)} />)}
                 {segs.map((s) => {
                   const t = typeById.get(s.appt.activity_type_id);
                   const p = s.appt.place_id ? placeById.get(s.appt.place_id) : null;
-                  const compact = s.height < 44;
+                  // What fits: under 30px one line; taller cards add the place, then the end time at the bottom edge.
+                  const compact = s.height < 30;
+                  const showPlace = !!p && s.height > 50;
+                  const showEnd = s.height > 66;
+                  const titleLines = Math.max(1, Math.floor((s.height - 19 - (showPlace ? 11 : 0) - (showEnd ? 11 : 0)) / 12));
                   return (
                     <button
                       key={s.appt.id + iso}
-                      className={`appt act-${t?.color ?? "slate"} status-${s.appt.status} ${compact ? "is-compact" : ""}`}
+                      className={`appt act-${t?.color ?? "slate"} status-${s.appt.status} ${s.appt.outcome ? `outcome-${s.appt.outcome}` : ""} ${compact ? "is-compact" : ""}`}
                       style={{ top: s.top, height: s.height - 2, left: `calc(${(s.lane / s.lanes) * 100}% + 2px)`, width: `calc(${100 / s.lanes}% - 4px)` }}
                       onClick={() => onOpen(s.appt.id)}
-                      title={`${s.appt.title}, ${fmtRange(s.appt.starts_at, s.appt.ends_at, tz)}`}
+                      title={`${s.appt.title}, ${fmtRange(s.appt.starts_at, s.appt.ends_at, tz)}${p ? `, ${p.name}` : ""}`}
                     >
                       <span className="appt-time">{fmtShortTime(s.appt.starts_at, tz)}</span>
-                      <span className="appt-title">
+                      <span className="appt-title" style={compact ? undefined : { WebkitLineClamp: titleLines }}>
                         {s.appt.title}
                         {s.appt.status === "tentative" && <span className="tag">Tentative</span>}
                         {s.appt.status === "cancelled" && <span className="tag">Cancelled</span>}
                       </span>
-                      {!compact && p && <span className="appt-place">{p.name}</span>}
-                      {!compact && s.height > 80 && s.appt.team && <span className="appt-team">{s.appt.team}</span>}
-                      {!compact && s.height > 60 && <span className="appt-type">{t?.name}</span>}
+                      {showPlace && (
+                        <span className="appt-place">
+                          <svg width="8" height="8" viewBox="0 0 24 24" fill="currentColor" aria-hidden><path d="M12 22s-7-6-7-12a7 7 0 0 1 14 0c0 6-7 12-7 12zm0-9.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z" /></svg>
+                          {p!.name}
+                        </span>
+                      )}
+                      {showEnd && <span className="appt-end">until {fmtShortTime(s.appt.ends_at, tz)}</span>}
                     </button>
                   );
                 })}

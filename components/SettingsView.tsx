@@ -14,7 +14,7 @@ function deviceName(ua: string | null) {
 }
 
 export default function SettingsView({ ctx }: { ctx: PlannerCtx }) {
-  const { profile, setProfile, supabase, toast, email, tz } = ctx;
+  const { profile, setProfile, supabase, toast, tz } = ctx;
   const [status, setStatus] = useNotificationStatus();
   const [busy, setBusy] = useState(false);
   const [devices, setDevices] = useState<PushSubscriptionRow[]>([]);
@@ -92,26 +92,6 @@ export default function SettingsView({ ctx }: { ctx: PlannerCtx }) {
 
   const deviceTz = deviceTimeZone();
 
-  // Theme is per device: stored in localStorage and applied as data-theme on <html>.
-  const [theme, setThemeState] = useState("system");
-  useEffect(() => {
-    setThemeState(document.documentElement.dataset.theme ?? "system");
-  }, []);
-  function setTheme(t: string) {
-    setThemeState(t);
-    try {
-      if (t === "system") {
-        localStorage.removeItem("theme");
-        delete document.documentElement.dataset.theme;
-      } else {
-        localStorage.setItem("theme", t);
-        document.documentElement.dataset.theme = t;
-      }
-    } catch {
-      toast("error", "Couldn’t save the theme on this device.");
-    }
-  }
-
   return (
     <div className="page">
       <div className="page-head"><h1>Settings</h1></div>
@@ -157,20 +137,6 @@ export default function SettingsView({ ctx }: { ctx: PlannerCtx }) {
       </section>
 
       <section className="card stack">
-        <h2 className="section-title">Appearance</h2>
-        <fieldset className="field">
-          <legend>Theme on this device</legend>
-          <div className="segmented">
-            {["system", "light", "dark"].map((t) => (
-              <button key={t} type="button" className={theme === t ? "is-active" : ""} aria-pressed={theme === t} onClick={() => setTheme(t)}>
-                {t[0].toUpperCase() + t.slice(1)}
-              </button>
-            ))}
-          </div>
-        </fieldset>
-      </section>
-
-      <section className="card stack">
         <h2 className="section-title">Defaults</h2>
         <label className="field">
           <span>Default appointment reminder</span>
@@ -192,13 +158,6 @@ export default function SettingsView({ ctx }: { ctx: PlannerCtx }) {
         </label>
       </section>
 
-      <section className="card stack">
-        <h2 className="section-title">Account</h2>
-        <p>Signed in as <strong>{email}</strong></p>
-        <div>
-          <button className="btn" onClick={async () => { await supabase.auth.signOut(); window.location.href = "/login"; }}>Sign out</button>
-        </div>
-      </section>
     </div>
   );
 }

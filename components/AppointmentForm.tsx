@@ -4,12 +4,12 @@ import { DateTime } from "luxon";
 import type { PlannerCtx } from "./usePlanner";
 import { APPT_FIELDS } from "./usePlanner";
 import type { Appointment, AppointmentStatus } from "@/lib/types";
-import { REMINDER_CHOICES } from "@/lib/types";
+import { ACTIVITY_COLORS, REMINDER_CHOICES } from "@/lib/types";
+import { ColorPicker } from "./ActivityTypesView";
 import { findConflicts, isOverlapError } from "@/lib/conflicts";
 import { fmtRange, todayISO, toInterval } from "@/lib/time";
 import { expandWeekly, WEEKDAY_LABELS, MAX_OCCURRENCES } from "@/lib/recurrence";
 import { isGoogleMapsUrl } from "@/lib/maps";
-import type { View } from "./Planner";
 
 interface OccReview {
   date: string;
@@ -23,14 +23,13 @@ interface OccReview {
 const pad = (n: number) => String(n).padStart(2, "0");
 
 export default function AppointmentForm({
-  ctx, initial, existing, onDone, onCancel, goTo,
+  ctx, initial, existing, onDone, onCancel,
 }: {
   ctx: PlannerCtx;
-  initial?: { typeId?: string; date?: string; start?: string; end?: string };
+  initial?: { typeId?: string; date?: string; start?: string; end?: string; newActivity?: boolean };
   existing?: Appointment;
-  onDone: (id?: string) => void;
+  onDone: (date?: string) => void; // the saved appointment's date, so the caller can show it on the calendar
   onCancel: () => void;
-  goTo: (v: View) => void;
 }) {
   const { tz, types, places, typeById, placeById, supabase, profile, toast, refresh } = ctx;
   const today = todayISO(tz);
@@ -65,6 +64,8 @@ export default function AppointmentForm({
   const requestId = useRef<string>(crypto.randomUUID());
 
   const [newPlace, setNewPlace] = useState<{ name: string; url: string } | null>(null);
+  const blankType = () => ({ name: "", color: ACTIVITY_COLORS[types.length % ACTIVITY_COLORS.length].key as string });
+  const [newType, setNewType] = useState<{ name: string; color: string } | null>(initial?.newActivity ? blankType : null);
 
   const type = typeById.get(typeId);
   const place = placeId ? placeById.get(placeId) : undefined;
@@ -171,7 +172,7 @@ export default function AppointmentForm({
       if (error) return handleDbError(error);
       await refresh();
       toast("ok", "Appointment updated");
-      onDone(existing.id);
+      onDone(date);
     } else {
       const { data, error } = await supabase
         .from("appointments")
@@ -181,15 +182,14 @@ export default function AppointmentForm({
       if (error) {
         if (error.code === "23505") {
           // Same request already saved (double tap or retry): treat as success.
-          const { data: prev } = await supabase.from("appointments").select("id").eq("client_request_id", requestId.current).maybeSingle();
           await refresh();
-          return onDone(prev?.id);
+          return onDone(date);
         }
         return handleDbError(error);
       }
       await refresh();
       toast("ok", "Appointment saved");
-      onDone(data.id);
+      onDone(date);
     }
   }
 
@@ -221,7 +221,7 @@ export default function AppointmentForm({
     await refresh();
     const skipped = rev.length - keep.length;
     toast("ok", `Saved ${keep.length} appointment${keep.length > 1 ? "s" : ""}${skipped ? `, skipped ${skipped}` : ""}`);
-    onDone();
+    onDone(keep[0] ? DateTime.fromISO(keep[0].starts_at).setZone(tz).toISODate()! : undefined); // first of the series
     return data;
   }
 
@@ -262,7 +262,7 @@ export default function AppointmentForm({
     if (e2) return handleDbError(e2);
     await refresh();
     toast("ok", `Updated ${changes.length} appointment${changes.length > 1 ? "s" : ""} in the series`);
-    onDone(existing.id);
+    onDone(date);
   }
 
   async function submit(opts: { ack?: boolean } = {}) {
@@ -308,6 +308,20 @@ export default function AppointmentForm({
     setError(null);
   }
 
+  // Create an activity type without leaving the form, then select it.
+  async function addType() {
+    if (!newType) return;
+    const name = newType.name.trim();
+    if (!name) return setError("Give the activity a name.");
+    if (types.some((t) => !t.archived_at && t.name.toLowerCase() === name.toLowerCase())) return setError("You already have an activity type with that name.");
+    const { data, error } = await supabase.from("activity_types").insert({ name, color: newType.color }).select("id").single();
+    if (error) return setError(`Couldn’t save the activity: ${error.message}`);
+    await refresh();
+    setTypeId(data.id);
+    setNewType(null);
+    setError(null);
+  }
+
   const inSeriesScope = !!existing?.series_id && scope === "series";
 
   return (
@@ -324,15 +338,22 @@ export default function AppointmentForm({
 
       <fieldset className="field">
         <legend>Activity</legend>
-        {activeTypes.length === 0 ? (
-          <p className="muted">No activity types yet. <button type="button" className="link" onClick={() => goTo("types")}>Create one</button></p>
-        ) : (
-          <div className="chips">
-            {activeTypes.map((t) => (
-              <button type="button" key={t.id} className={`chip act-${t.color} ${typeId === t.id ? "is-selected" : ""}`} aria-pressed={typeId === t.id} onClick={() => setTypeId(t.id)}>
-                <span className="swatch" aria-hidden /> {t.name}
-              </button>
-            ))}
+        <div className="chips">
+          {activeTypes.map((t) => (
+            <button type="button" key={t.id} className={`chip act-${t.color} ${typeId === t.id ? "is-selected" : ""}`} aria-pressed={typeId === t.id} onClick={() => setTypeId(t.id)}>
+              <span className="swatch" aria-hidden /> {t.name}
+            </button>
+          ))}
+          {!newType && <button type="button" className="chip chip-dashed" onClick={() => setNewType(blankType())}>＋ New activity</button>}
+        </div>
+        {newType && (
+          <div className="subform">
+            <label className="field"><span>Activity name</span><input value={newType.name} onChange={(e) => setNewType({ ...newType, name: e.target.value })} placeholder="Cricket" autoFocus /></label>
+            <ColorPicker value={newType.color} onChange={(color) => setNewType({ ...newType, color })} />
+            <div className="row">
+              <button type="button" className="btn" onClick={addType}>Save activity</button>
+              <button type="button" className="btn btn-ghost" onClick={() => setNewType(null)}>Cancel</button>
+            </div>
           </div>
         )}
       </fieldset>
@@ -392,6 +413,8 @@ export default function AppointmentForm({
         )}
       </label>
 
+      <label className="field"><span>Notes <span className="muted">(optional)</span></span><textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Anything to remember: what to bring, who to call" /></label>
+
       <button type="button" className="disclosure" aria-expanded={more} onClick={() => setMore(!more)}>
         {more ? "▾" : "▸"} More options
         {!more && <span className="muted"> · {status === "tentative" ? "Tentative" : "Confirmed"}, {REMINDER_CHOICES.find((c) => c.value === reminder)?.label.toLowerCase() ?? `${reminder} min before`}{repeat ? ", repeats" : ""}</span>}
@@ -414,7 +437,6 @@ export default function AppointmentForm({
             </select>
           </label>
           <label className="field"><span>Team <span className="muted">(optional)</span></span><input value={team} onChange={(e) => setTeam(e.target.value)} placeholder="Sunday XI" /></label>
-          <label className="field"><span>Notes <span className="muted">(optional)</span></span><textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} /></label>
 
           {!existing && (
             <fieldset className="field">

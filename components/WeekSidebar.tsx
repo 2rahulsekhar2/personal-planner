@@ -1,7 +1,7 @@
 "use client";
 import { DateTime } from "luxon";
 import type { PlannerCtx } from "./usePlanner";
-import { fmtRange, isTaskOverdue, relativeDayLabel, startOfWeek, todayISO } from "@/lib/time";
+import { fmtRange, isTaskOverdue, relativeDayLabel, weekFromToday, todayISO } from "@/lib/time";
 import { TaskChip, visibleAppointments } from "./WeekView";
 
 export default function WeekSidebar({
@@ -16,7 +16,7 @@ export default function WeekSidebar({
   const { tz, typeById, tasks, types } = ctx;
   const d = DateTime.fromISO(day, { zone: tz });
   const today = todayISO(tz);
-  const ws = startOfWeek(day, tz);
+  const ws = weekFromToday(day, tz);
   const we = ws.plus({ days: 7 });
   const gridStart = d.startOf("month").startOf("week");
   const cells = Array.from({ length: 42 }, (_, i) => gridStart.plus({ days: i }));

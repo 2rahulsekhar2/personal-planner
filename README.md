@@ -20,7 +20,7 @@ tasks never block time, and reminder status is shown honestly per device.
 
 ## Setup (about 20 minutes)
 
-1. **Supabase.** Create a free project at supabase.com. In *SQL Editor*, run `supabase/migrations/0001_init.sql`.
+1. **Supabase.** Create a free project at supabase.com. In *SQL Editor*, run `supabase/migrations/0001_init.sql`, then `supabase/migrations/0002_appointment_outcome.sql`.
 2. **Sign-in.** In *Authentication → Providers*, email (magic link) is on by default. To add Google, enable the Google provider and paste a Google OAuth client ID/secret (Google Cloud Console → Credentials → OAuth client, redirect URI shown by Supabase). In *Authentication → URL Configuration*, set Site URL to your Vercel URL and add `https://YOUR-APP.vercel.app/auth/callback` (and `http://localhost:3000/auth/callback` for local dev) to Redirect URLs.
 3. **Push keys.** Run `npx web-push generate-vapid-keys`.
 4. **Vercel.** Import this repo at vercel.com/new and add the variables from `.env.example`. Deploy.

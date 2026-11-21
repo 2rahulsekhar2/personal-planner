@@ -3,7 +3,7 @@ import { useState } from "react";
 import type { PlannerCtx } from "./usePlanner";
 import { ACTIVITY_COLORS, type ActivityType } from "@/lib/types";
 
-function ColorPicker({ value, onChange }: { value: string; onChange: (c: string) => void }) {
+export function ColorPicker({ value, onChange }: { value: string; onChange: (c: string) => void }) {
   return (
     <div className="color-picker" role="radiogroup" aria-label="Color">
       {ACTIVITY_COLORS.map((c) => (
