@@ -26,7 +26,7 @@ export default function AppointmentForm({
   ctx, initial, existing, onDone, onCancel,
 }: {
   ctx: PlannerCtx;
-  initial?: { typeId?: string; date?: string; start?: string; end?: string; newActivity?: boolean };
+  initial?: { typeId?: string; date?: string; start?: string; end?: string };
   existing?: Appointment;
   onDone: (date?: string) => void; // the saved appointment's date, so the caller can show it on the calendar
   onCancel: () => void;
@@ -40,6 +40,9 @@ export default function AppointmentForm({
   const nextHour = DateTime.now().setZone(tz).plus({ hours: 1 }).startOf("hour");
 
   const [typeId, setTypeId] = useState(existing?.activity_type_id ?? initial?.typeId ?? "");
+  // One-off activity and place, typed for this appointment only; null while the saved lists are in use.
+  const [customActivity, setCustomActivity] = useState<string | null>(existing?.custom_activity ?? null);
+  const [customPlace, setCustomPlace] = useState<string | null>(existing?.custom_place ?? null);
   const [date, setDate] = useState(exStart?.toISODate() ?? initial?.date ?? tomorrow);
   const [start, setStart] = useState(exStart?.toFormat("HH:mm") ?? initial?.start ?? `${pad(nextHour.hour)}:00`);
   const [end, setEnd] = useState(exEnd?.toFormat("HH:mm") ?? initial?.end ?? `${pad((nextHour.hour + 1) % 24)}:00`);
@@ -65,11 +68,13 @@ export default function AppointmentForm({
 
   const [newPlace, setNewPlace] = useState<{ name: string; url: string } | null>(null);
   const blankType = () => ({ name: "", color: ACTIVITY_COLORS[types.length % ACTIVITY_COLORS.length].key as string });
-  const [newType, setNewType] = useState<{ name: string; color: string } | null>(initial?.newActivity ? blankType : null);
+  const [newType, setNewType] = useState<{ name: string; color: string } | null>(() => (types.some((t) => !t.archived_at) ? null : blankType())); // nothing to pick yet: start by naming one
 
   const type = typeById.get(typeId);
   const place = placeId ? placeById.get(placeId) : undefined;
-  const generatedTitle = type ? (place ? `${type.name} at ${place.name}` : type.name) : "";
+  const activityName = type?.name ?? customActivity?.trim() ?? "";
+  const placeName = place?.name ?? customPlace?.trim() ?? "";
+  const generatedTitle = activityName ? (placeName ? `${activityName} at ${placeName}` : activityName) : "";
   const finalTitle = (titleEdited ? title : generatedTitle).trim() || generatedTitle;
 
   const activeTypes = types.filter((t) => !t.archived_at || t.id === typeId);
@@ -117,11 +122,11 @@ export default function AppointmentForm({
   }
 
   function describe(a: Appointment) {
-    return `${typeById.get(a.activity_type_id)?.name ?? "Appointment"} “${a.title}”, ${DateTime.fromISO(a.starts_at).setZone(tz).toFormat("ccc d LLL")} ${fmtRange(a.starts_at, a.ends_at, tz)}`;
+    return `${typeById.get(a.activity_type_id ?? "")?.name ?? a.custom_activity ?? "Appointment"} “${a.title}”, ${DateTime.fromISO(a.starts_at).setZone(tz).toFormat("ccc d LLL")} ${fmtRange(a.starts_at, a.ends_at, tz)}`;
   }
 
   function validate(): string | null {
-    if (!typeId) return "Choose an activity type.";
+    if (!typeId && !customActivity?.trim()) return "Choose an activity, or type one for this appointment.";
     if (!date) return "Choose a date.";
     if (!start || !end) return "Enter a start and end time.";
     if (!interval.valid) return "That date or time isn’t valid.";
@@ -136,8 +141,10 @@ export default function AppointmentForm({
 
   function fields() {
     return {
-      activity_type_id: typeId,
+      activity_type_id: typeId || null,
+      custom_activity: typeId ? null : customActivity?.trim() || null,
       place_id: placeId || null,
+      custom_place: placeId ? null : customPlace?.trim() || null,
       title: finalTitle,
       status,
       team: team.trim() || null,
@@ -147,7 +154,10 @@ export default function AppointmentForm({
   }
 
   async function handleDbError(err: { code?: string; message?: string }) {
-    if (isOverlapError(err)) {
+    if (err.code === "42703" || err.code === "PGRST204" || err.code === "23502") {
+      // Unknown column, or activity still required: the custom activity/place migration has not been run.
+      setError("A one-off activity or place needs a one-time database update first: run supabase/migrations/0003_custom_activity_place.sql in the Supabase SQL editor.");
+    } else if (isOverlapError(err)) {
       setError(`Another ${type?.name ?? "appointment of this type"} was just saved at an overlapping time, possibly from another device. Nothing was saved. Pick a different time.`);
     } else {
       setError(`Couldn’t save: ${err.message ?? "unknown error"}. Your changes are still here; try again.`);
@@ -155,7 +165,7 @@ export default function AppointmentForm({
   }
 
   async function saveSingle(ack: boolean) {
-    const cand = { id: existing?.id, activity_type_id: typeId, starts_at: interval.start.toUTC().toISO()!, ends_at: interval.end.toUTC().toISO()!, status };
+    const cand = { id: existing?.id, activity_type_id: typeId || null, starts_at: interval.start.toUTC().toISO()!, ends_at: interval.end.toUTC().toISO()!, status };
     const overlapping = await fetchOverlapping(cand.starts_at, cand.ends_at);
     const res = findConflicts(cand, overlapping);
     if (res.blocking.length) {
@@ -201,7 +211,7 @@ export default function AppointmentForm({
     }
     const overlapping = await fetchOverlapping(occ[0].starts_at, occ[occ.length - 1].ends_at);
     return occ.map((o) => {
-      const r = findConflicts({ activity_type_id: typeId, starts_at: o.starts_at, ends_at: o.ends_at, status }, overlapping);
+      const r = findConflicts({ activity_type_id: typeId || null, starts_at: o.starts_at, ends_at: o.ends_at, status }, overlapping);
       return { ...o, blocking: r.blocking, warnings: r.warnings, skip: r.blocking.length > 0 };
     });
   }
@@ -246,7 +256,7 @@ export default function AppointmentForm({
     const blockingAll: Appointment[] = [];
     const warningAll: Appointment[] = [];
     for (const c of changes) {
-      const r = findConflicts({ ...c, activity_type_id: typeId, status }, overlapping, ids);
+      const r = findConflicts({ ...c, activity_type_id: typeId || null, status }, overlapping, ids);
       blockingAll.push(...r.blocking);
       warningAll.push(...r.warnings);
     }
@@ -324,8 +334,37 @@ export default function AppointmentForm({
 
   const inSeriesScope = !!existing?.series_id && scope === "series";
 
+  // "1 h 30 min", shown on the preview.
+  const mins = interval.valid ? Math.round(interval.end.diff(interval.start, "minutes").minutes) : 0;
+  const length = mins <= 0 ? "" : `${mins >= 60 ? `${Math.floor(mins / 60)} h` : ""}${mins % 60 ? ` ${mins % 60} min` : ""}`.trim();
+
   return (
     <form className="form" onSubmit={(e) => { e.preventDefault(); submit(); }} noValidate>
+      {/* The appointment as it will look, filling in as you choose. The title is edited right on it. */}
+      <div className={`details-head form-preview act-${type?.color ?? "slate"} ${status === "tentative" ? "status-tentative" : ""}`}>
+        <span className="type-label"><span className="swatch" aria-hidden />{activityName || "Choose an activity"}</span>
+        <input
+          className="preview-title"
+          aria-label="Title"
+          value={titleEdited ? title : generatedTitle}
+          placeholder={generatedTitle || "Title"}
+          onChange={(e) => { setTitleEdited(true); setTitle(e.target.value); }}
+        />
+        {titleEdited && generatedTitle && title !== generatedTitle && (
+          <button type="button" className="link" onClick={() => { setTitleEdited(false); setTitle(""); }}>Use “{generatedTitle}”</button>
+        )}
+        <p className="details-when">
+          {interval.valid ? (
+            <>
+              {interval.start.toFormat("cccc, d LLLL")}
+              <br />
+              {interval.start.toFormat("h:mm a")} – {interval.end.toFormat("h:mm a")} <span className="preview-length">{length}</span>
+            </>
+          ) : "Pick a date and time"}
+          {placeName && <><br />{placeName}</>}
+        </p>
+      </div>
+
       {existing?.series_id && (
         <fieldset className="field">
           <legend>Apply changes to</legend>
@@ -338,14 +377,23 @@ export default function AppointmentForm({
 
       <fieldset className="field">
         <legend>Activity</legend>
-        <div className="chips">
+        {/* One line to type a one-off, with the saved activities as small picks under it. */}
+        <input
+          value={type?.name ?? customActivity ?? ""}
+          onChange={(e) => { setTypeId(""); setCustomActivity(e.target.value); }}
+          placeholder="Type an activity, or pick one"
+          maxLength={100}
+          aria-label="Activity"
+        />
+        <div className="chips chips-xs">
           {activeTypes.map((t) => (
-            <button type="button" key={t.id} className={`chip act-${t.color} ${typeId === t.id ? "is-selected" : ""}`} aria-pressed={typeId === t.id} onClick={() => setTypeId(t.id)}>
+            <button type="button" key={t.id} className={`chip act-${t.color} ${typeId === t.id ? "is-selected" : ""}`} aria-pressed={typeId === t.id} onClick={() => { setTypeId(t.id); setCustomActivity(null); }}>
               <span className="swatch" aria-hidden /> {t.name}
             </button>
           ))}
-          {!newType && <button type="button" className="chip chip-dashed" onClick={() => setNewType(blankType())}>＋ New activity</button>}
+          {!newType && <button type="button" className="chip chip-dashed" onClick={() => setNewType(blankType())}>＋ Save a new one</button>}
         </div>
+        {!typeId && customActivity?.trim() && <p className="hint">Just for this appointment. It is not added to your activities.</p>}
         {newType && (
           <div className="subform">
             <label className="field"><span>Activity name</span><input value={newType.name} onChange={(e) => setNewType({ ...newType, name: e.target.value })} placeholder="Cricket" autoFocus /></label>
@@ -358,37 +406,38 @@ export default function AppointmentForm({
         )}
       </fieldset>
 
-      <fieldset className="field" disabled={inSeriesScope}>
-        <legend>Date</legend>
+      <fieldset className="field">
+        <legend>When</legend>
         <div className="chips">
-          <button type="button" className={`chip ${date === today ? "is-selected" : ""}`} aria-pressed={date === today} onClick={() => setDate(today)}>Today</button>
-          <button type="button" className={`chip ${date === tomorrow ? "is-selected" : ""}`} aria-pressed={date === tomorrow} onClick={() => setDate(tomorrow)}>Tomorrow</button>
-          <input type="date" aria-label="Date" value={date} onChange={(e) => setDate(e.target.value)} className="input-inline" />
+          <button type="button" disabled={inSeriesScope} className={`chip ${date === today ? "is-selected" : ""}`} aria-pressed={date === today} onClick={() => setDate(today)}>Today</button>
+          <button type="button" disabled={inSeriesScope} className={`chip ${date === tomorrow ? "is-selected" : ""}`} aria-pressed={date === tomorrow} onClick={() => setDate(tomorrow)}>Tomorrow</button>
+          <input type="date" disabled={inSeriesScope} aria-label="Date" value={date} onChange={(e) => setDate(e.target.value)} className="input-inline" />
         </div>
         {inSeriesScope && <p className="hint">Dates stay the same for each occurrence; only the times change.</p>}
+        <div className="time-row">
+          <input type="time" required aria-label="Start" value={start} onChange={(e) => onStartChange(e.target.value)} />
+          <span className="muted">to</span>
+          <input type="time" required aria-label="End" value={end} onChange={(e) => setEnd(e.target.value)} />
+        </div>
       </fieldset>
-
-      <div className="field-row">
-        <label className="field">
-          <span>Start</span>
-          <input type="time" required value={start} onChange={(e) => onStartChange(e.target.value)} />
-        </label>
-        <label className="field">
-          <span>End</span>
-          <input type="time" required value={end} onChange={(e) => setEnd(e.target.value)} />
-        </label>
-      </div>
       {interval.valid && interval.nextDay && start !== end && <p className="hint">Ends the next day, {interval.end.toFormat("ccc d LLL, h:mm a")}.</p>}
 
       <fieldset className="field">
         <legend>Place</legend>
-        <div className="chips">
-          <button type="button" className={`chip ${!placeId ? "is-selected" : ""}`} aria-pressed={!placeId} onClick={() => setPlaceId("")}>No place</button>
+        <input
+          value={place?.name ?? customPlace ?? ""}
+          onChange={(e) => { setPlaceId(""); setCustomPlace(e.target.value); }}
+          placeholder="Type a place, or pick one (optional)"
+          maxLength={200}
+          aria-label="Place"
+        />
+        <div className="chips chips-xs">
           {activePlaces.map((p) => (
-            <button type="button" key={p.id} className={`chip ${placeId === p.id ? "is-selected" : ""}`} aria-pressed={placeId === p.id} onClick={() => setPlaceId(p.id)}>{p.name}</button>
+            <button type="button" key={p.id} className={`chip ${placeId === p.id ? "is-selected" : ""}`} aria-pressed={placeId === p.id} onClick={() => { setPlaceId(placeId === p.id ? "" : p.id); setCustomPlace(null); }}>{p.name}</button>
           ))}
-          {!newPlace && <button type="button" className="chip chip-dashed" onClick={() => setNewPlace({ name: "", url: "" })}>＋ New place</button>}
+          {!newPlace && <button type="button" className="chip chip-dashed" onClick={() => setNewPlace({ name: "", url: "" })}>＋ Save a new one</button>}
         </div>
+        {!placeId && customPlace?.trim() && <p className="hint">Just for this appointment. It is not added to your places.</p>}
         {newPlace && (
           <div className="subform">
             <label className="field"><span>Place name</span><input value={newPlace.name} onChange={(e) => setNewPlace({ ...newPlace, name: e.target.value })} placeholder="Riverside Ground" /></label>
@@ -400,18 +449,6 @@ export default function AppointmentForm({
           </div>
         )}
       </fieldset>
-
-      <label className="field">
-        <span>Title</span>
-        <input
-          value={titleEdited ? title : generatedTitle}
-          placeholder={generatedTitle || "Generated from activity and place"}
-          onChange={(e) => { setTitleEdited(true); setTitle(e.target.value); }}
-        />
-        {titleEdited && generatedTitle && title !== generatedTitle && (
-          <button type="button" className="link hint" onClick={() => { setTitleEdited(false); setTitle(""); }}>Use “{generatedTitle}”</button>
-        )}
-      </label>
 
       <label className="field"><span>Notes <span className="muted">(optional)</span></span><textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Anything to remember: what to bring, who to call" /></label>
 

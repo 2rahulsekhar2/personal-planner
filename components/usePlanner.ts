@@ -86,8 +86,9 @@ export function usePlanner() {
     async (r: { from: string; to: string }) => {
       const query = (fields: string) =>
         supabase.from("appointments").select(fields).lt("starts_at", r.to).gt("ends_at", r.from).order("starts_at");
-      let { data, error } = await query(`${APPT_FIELDS}, outcome, outcome_reason`);
-      // 42703 = unknown column: the outcome migration has not been run yet. Load without it so the calendar still works.
+      // 42703 = unknown column: a later migration has not been run yet. Fall back to fewer columns so the calendar still works.
+      let { data, error } = await query(`${APPT_FIELDS}, outcome, outcome_reason, custom_activity, custom_place`);
+      if (error?.code === "42703") ({ data, error } = await query(`${APPT_FIELDS}, outcome, outcome_reason`));
       if (error?.code === "42703") ({ data, error } = await query(APPT_FIELDS));
       if (error) {
         setLoadError(error.message);
@@ -124,6 +125,17 @@ export function usePlanner() {
     await Promise.all([loadBase(), range ? loadAppointments(range) : Promise.resolve()]);
   }, [loadBase, loadAppointments, range]);
 
+  // Shared by the Tasks page and the Day view's task rows.
+  const completeTask = useCallback(
+    async (t: Task) => {
+      const { error } = await supabase.from("tasks").update({ state: "completed", completed_at: new Date().toISOString() }).eq("id", t.id);
+      if (error) return toast("error", `Couldn’t update: ${error.message}`);
+      await refresh();
+      toast("ok", `Done: ${t.title}`);
+    },
+    [supabase, toast, refresh],
+  );
+
   const typeById = useMemo(() => new Map(types.map((t) => [t.id, t])), [types]);
   const placeById = useMemo(() => new Map(places.map((p) => [p.id, p])), [places]);
 
@@ -143,6 +155,7 @@ export function usePlanner() {
     loading,
     loadError,
     refresh,
+    completeTask,
     toasts,
     toast,
   };

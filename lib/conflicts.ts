@@ -1,6 +1,6 @@
 export interface Slot {
   id?: string;
-  activity_type_id: string;
+  activity_type_id: string | null; // null: a one-off custom activity, which never blocks
   starts_at: string;
   ends_at: string;
   status: string;
@@ -31,7 +31,7 @@ export function findConflicts<T extends Slot>(
     if (e.status === "cancelled") continue;
     if (e.id && (e.id === candidate.id || excludeIds.includes(e.id))) continue;
     if (!overlaps(cs, ce, Date.parse(e.starts_at), Date.parse(e.ends_at))) continue;
-    if (e.activity_type_id === candidate.activity_type_id) result.blocking.push(e);
+    if (e.activity_type_id && e.activity_type_id === candidate.activity_type_id) result.blocking.push(e);
     else result.warnings.push(e);
   }
   return result;

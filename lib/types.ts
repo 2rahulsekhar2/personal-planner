@@ -25,7 +25,7 @@ export interface Place {
 
 export interface Appointment {
   id: string;
-  activity_type_id: string;
+  activity_type_id: string | null; // null when the appointment uses a one-off custom_activity
   place_id: string | null;
   series_id: string | null;
   title: string;
@@ -38,6 +38,9 @@ export interface Appointment {
   // Set by the user afterwards. Absent until supabase/migrations/0002_appointment_outcome.sql has been run.
   outcome?: "done" | "not_done" | null;
   outcome_reason?: string | null;
+  // One-off free text for this appointment only. Absent until supabase/migrations/0003_custom_activity_place.sql has been run.
+  custom_activity?: string | null;
+  custom_place?: string | null;
 }
 
 export interface Task {

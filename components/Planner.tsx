@@ -22,8 +22,7 @@ import { registerServiceWorker } from "@/lib/push-client";
 export type View = "week" | "agenda" | "tasks" | "types" | "places" | "settings";
 
 export type PanelState =
-  | { kind: "add" }
-  | { kind: "new-appt"; typeId?: string; date?: string; start?: string; end?: string; newActivity?: boolean }
+  | { kind: "new-appt"; typeId?: string; date?: string; start?: string; end?: string }
   | { kind: "edit-appt"; id: string }
   | { kind: "appt"; id: string }
   | { kind: "new-task"; date?: string }
@@ -42,16 +41,17 @@ function ViewToggle({ view, onChange }: { view: View; onChange: (v: View) => voi
 }
 
 type AddKey = "event" | "task" | "activity" | "place";
-const ADD_ITEMS: { key: AddKey; label: string; hint: string; icon: React.ReactNode }[] = [
-  { key: "event", label: "Event", hint: "Book an appointment", icon: <><rect x="3" y="4.5" width="18" height="16" rx="3" /><path d="M8 2.5v4M16 2.5v4M3 9.5h18" /></> },
-  { key: "task", label: "Task", hint: "Add a task, see your list", icon: <><rect x="3.5" y="3.5" width="17" height="17" rx="5" /><path d="M8 12.5l2.8 2.8L16 9.5" /></> },
-  { key: "activity", label: "Activity", hint: "Add or edit activity types", icon: <><path d="M3 12V4.5A1.5 1.5 0 0 1 4.5 3H12l9 9-8.5 8.5a1.5 1.5 0 0 1-2.1 0L3 12z" /><circle cx="7.5" cy="7.5" r="1.2" /></> },
-  { key: "place", label: "Place", hint: "Add or edit places", icon: <><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z" /><circle cx="12" cy="10" r="2.3" /></> },
+// The Add menu has two tiers: what goes on the calendar (appointment, task), then the lists those draw on.
+const ADD_ITEMS: { key: AddKey; label: string; hint?: string; icon: React.ReactNode }[] = [
+  { key: "event", label: "Appointment", hint: "A booked time", icon: <><rect x="3" y="4.5" width="18" height="16" rx="3" /><path d="M8 2.5v4M16 2.5v4M3 9.5h18" /></> },
+  { key: "task", label: "Task", hint: "Something to do", icon: <><rect x="3.5" y="3.5" width="17" height="17" rx="5" /><path d="M8 12.5l2.8 2.8L16 9.5" /></> },
+  { key: "activity", label: "Activities", icon: <><path d="M3 12V4.5A1.5 1.5 0 0 1 4.5 3H12l9 9-8.5 8.5a1.5 1.5 0 0 1-2.1 0L3 12z" /><circle cx="7.5" cy="7.5" r="1.2" /></> },
+  { key: "place", label: "Places", icon: <><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z" /><circle cx="12" cy="10" r="2.3" /></> },
 ];
 
 export default function Planner() {
   const ctx = usePlanner();
-  const { tz, setRange, tasks, types, loading, loadError, toasts, appointments } = ctx;
+  const { tz, setRange, tasks, loading, loadError, toasts, appointments } = ctx;
   const [view, setView] = useState<View | null>(null);
   const [day, setDay] = useState<string>(() => todayISO(tz));
   const [panel, setPanel] = useState<PanelState>(null);
@@ -84,14 +84,14 @@ export default function Planner() {
   }, [day, tz, setRange]);
 
   const overdueCount = useMemo(() => tasks.filter((t) => isTaskOverdue(t, tz)).length, [tasks, tz]);
-  const activeTypes = types.filter((t) => !t.archived_at);
 
   const closePanel = () => setPanel(null);
 
   // The calendar view last used (Week or Day): where the brand, and saving an appointment, return to.
   const calView = useRef<View>("agenda");
   if (view === "week" || view === "agenda") calView.current = view;
-  const toggle = view ? <ViewToggle view={view} onChange={setView} /> : null;
+  // Switching to Day lands on today.
+  const toggle = view ? <ViewToggle view={view} onChange={(v) => { if (v === "agenda") setDay(todayISO(tz)); setView(v); }} /> : null;
 
   // After saving an appointment: close the form and show its day on the calendar.
   const showSaved = (date?: string) => {
@@ -110,29 +110,14 @@ export default function Planner() {
 
   // Each Add menu row opens its section; Event and Task also start a new one straight away.
   const pick = (key: AddKey) => {
-    if (key === "event") return setPanel({ kind: "add" });
+    if (key === "event") return setPanel({ kind: "new-appt" });
     setPanel(key === "task" ? { kind: "new-task" } : null);
     setView(key === "task" ? "tasks" : key === "activity" ? "types" : "places");
   };
 
   let panelBody: React.ReactNode = null;
   let panelTitle = "";
-  if (panel?.kind === "add") {
-    panelTitle = "New event";
-    panelBody = (
-      <div className="stack">
-        <p className="muted">Choose the activity.</p>
-        <div className="chips chips-large">
-          {activeTypes.map((t) => (
-            <button key={t.id} className={`chip act-${t.color}`} onClick={() => setPanel({ kind: "new-appt", typeId: t.id })}>
-              <span className="swatch" aria-hidden /> {t.name}
-            </button>
-          ))}
-          <button className="chip chip-dashed" onClick={() => setPanel({ kind: "new-appt", newActivity: true })}>＋ New activity</button>
-        </div>
-      </div>
-    );
-  } else if (panel?.kind === "new-appt") {
+  if (panel?.kind === "new-appt") {
     panelTitle = "New appointment";
     panelBody = <AppointmentForm ctx={ctx} initial={panel} onDone={showSaved} onCancel={closePanel} />;
   } else if (panel?.kind === "edit-appt") {
@@ -177,17 +162,19 @@ export default function Planner() {
             </button>
             {menu && (
               <div className="pop-menu add-menu" role="menu" aria-label="Add">
-                {ADD_ITEMS.map((it, i) => (
-                  <button key={it.key} className="add-item" role="menuitem" autoFocus={i === 0} onClick={() => { setMenu(false); pick(it.key); }}>
-                    <span className="add-icon" aria-hidden>
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{it.icon}</svg>
-                    </span>
-                    <span className="grow">
-                      <span className="add-label">{it.label}</span>
-                      <span className="add-hint">{it.hint}</span>
-                    </span>
-                    {it.key === "task" && overdueCount > 0 && <span className="count count-alert">{overdueCount}</span>}
-                  </button>
+                {[ADD_ITEMS.slice(0, 2), ADD_ITEMS.slice(2)].map((tier, n) => (
+                  <div key={n} className={n === 0 ? "add-primary" : "add-support"}>
+                    {tier.map((it, i) => (
+                      <button key={it.key} className={n === 0 ? "add-tile" : "add-mini"} role="menuitem" autoFocus={n === 0 && i === 0} onClick={() => { setMenu(false); pick(it.key); }}>
+                        <span className="add-icon" aria-hidden>
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{it.icon}</svg>
+                        </span>
+                        <span className="add-label">{it.label}</span>
+                        {it.hint && <span className="add-hint">{it.hint}</span>}
+                        {it.key === "task" && overdueCount > 0 && <span className="count count-alert" aria-label={`${overdueCount} overdue`}>{overdueCount}</span>}
+                      </button>
+                    ))}
+                  </div>
                 ))}
               </div>
             )}

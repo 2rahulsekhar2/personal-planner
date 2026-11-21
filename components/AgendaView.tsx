@@ -1,7 +1,7 @@
 "use client";
 import { DateTime } from "luxon";
 import type { PlannerCtx } from "./usePlanner";
-import { fmtRange, relativeDayLabel, startOfWeek, todayISO, isTaskOverdue, fmtShortTime } from "@/lib/time";
+import { fmtClock, fmtRange, relativeDayLabel, weekFromToday, todayISO, isTaskOverdue, fmtShortTime } from "@/lib/time";
 import { TaskChip, visibleAppointments } from "./WeekView";
 
 export default function AgendaView({
@@ -19,7 +19,7 @@ export default function AgendaView({
   const dayStart = d.startOf("day");
   const dayEnd = dayStart.plus({ days: 1 });
   const today = todayISO(tz);
-  const ws = startOfWeek(day, tz);
+  const ws = weekFromToday(day, tz); // the strip starts at today, like the week view
 
   const items = visibleAppointments(ctx)
     .filter((a) => DateTime.fromISO(a.starts_at) < dayEnd && DateTime.fromISO(a.ends_at) > dayStart)
@@ -47,7 +47,7 @@ export default function AgendaView({
   type Row = { at: string; node: React.ReactNode };
   const rows: Row[] = [
     ...items.map((a) => {
-      const t = typeById.get(a.activity_type_id);
+      const t = typeById.get(a.activity_type_id ?? "");
       const p = a.place_id ? placeById.get(a.place_id) : null;
       return {
         at: a.starts_at,
@@ -59,7 +59,7 @@ export default function AgendaView({
               {a.status !== "confirmed" && <span className="tag">{a.status === "tentative" ? "Tentative" : "Cancelled"}</span>}
             </span>
             <span className="agenda-meta">
-              <span className="type-label"><span className="swatch" aria-hidden />{t?.name}</span>
+              <span className="type-label"><span className="swatch" aria-hidden />{t?.name ?? a.custom_activity}</span>
               {p && <span>· {p.name}</span>}
               {a.team && <span>· {a.team}</span>}
             </span>
@@ -104,21 +104,25 @@ export default function AgendaView({
         {relativeDayLabel(day, tz)} <span className="muted">{d.toFormat("cccc, d LLLL")}</span>
       </h1>
 
-      {overdue.length > 0 && (
-        <section className="card card-alert">
-          <h2 className="section-title">Overdue</h2>
-          <div className="task-list-inline">
-            {overdue.map((t) => <TaskChip key={t.id} task={t} tz={tz} onOpen={() => onOpenTask(t.id)} />)}
-          </div>
-        </section>
-      )}
-
-      {dayTasks.length > 0 && (
-        <section className="card">
+      {/* Tasks are plain rows: tap the circle to finish one, tap the row to open it. Overdue ones lead, in red. */}
+      {overdue.length + dayTasks.length > 0 && (
+        <section className="day-tasks">
           <h2 className="section-title">Tasks</h2>
-          <div className="task-list-inline">
-            {dayTasks.map((t) => <TaskChip key={t.id} task={t} tz={tz} onOpen={() => onOpenTask(t.id)} />)}
-          </div>
+          {[...overdue, ...dayTasks.filter((t) => !overdue.includes(t))].map((t) => {
+            const late = isTaskOverdue(t, tz);
+            const done = t.state !== "pending";
+            return (
+              <div key={t.id} className={`day-task ${late ? "is-overdue" : ""} ${done ? "is-done" : ""}`}>
+                <button className="day-task-check" disabled={done} aria-label={done ? "Done" : `Mark “${t.title}” done`} onClick={() => ctx.completeTask(t)}>
+                  {done && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>}
+                </button>
+                <button className="day-task-main" onClick={() => onOpenTask(t.id)}>
+                  <span className="day-task-title">{t.title}</span>
+                  <span className="day-task-when">{late ? `Overdue, ${t.due_date === day && t.due_time ? fmtClock(t.due_time) : relativeDayLabel(t.due_date, tz)}` : t.due_time ? fmtClock(t.due_time) : ""}</span>
+                </button>
+              </div>
+            );
+          })}
         </section>
       )}
 

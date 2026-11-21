@@ -54,7 +54,7 @@ export default function AppointmentDetails({
     setError(null);
     toast("ok", "Notes saved");
   }
-  const t = typeById.get(appt.activity_type_id);
+  const t = typeById.get(appt.activity_type_id ?? "");
   const p = appt.place_id ? placeById.get(appt.place_id) : null;
   const start = DateTime.fromISO(appt.starts_at).setZone(tz);
   const reminderLabel =
@@ -92,7 +92,7 @@ export default function AppointmentDetails({
   return (
     <div className="details">
       <div className={`details-head act-${t?.color ?? "slate"} status-${appt.status}`}>
-        <span className="type-label"><span className="swatch" aria-hidden />{t?.name}{t?.archived_at ? " (archived)" : ""}</span>
+        <span className="type-label"><span className="swatch" aria-hidden />{t?.name ?? appt.custom_activity}{t?.archived_at ? " (archived)" : ""}</span>
         <h3>{appt.title}</h3>
         <p className="details-when">
           {start.toFormat("cccc, d LLLL yyyy")}
@@ -142,6 +142,8 @@ export default function AppointmentDetails({
               {p.notes && <span className="muted">{p.notes}</span>}
               <a className="link" href={p.maps_url} target="_blank" rel="noopener noreferrer">Open in Google Maps</a>
             </>
+          ) : appt.custom_place ? (
+            <span>{appt.custom_place}</span>
           ) : (
             <span className="muted">No place</span>
           )}
