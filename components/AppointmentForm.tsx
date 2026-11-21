@@ -7,6 +7,7 @@ import type { Appointment, AppointmentStatus } from "@/lib/types";
 import { ACTIVITY_COLORS, REMINDER_CHOICES } from "@/lib/types";
 import { ColorPicker } from "./ActivityTypesView";
 import { findConflicts, isOverlapError } from "@/lib/conflicts";
+import type { Circle } from "@/lib/circles";
 import { fmtRange, todayISO, toInterval } from "@/lib/time";
 import { expandWeekly, WEEKDAY_LABELS, MAX_OCCURRENCES } from "@/lib/recurrence";
 import { isGoogleMapsUrl } from "@/lib/maps";
@@ -23,10 +24,11 @@ interface OccReview {
 const pad = (n: number) => String(n).padStart(2, "0");
 
 export default function AppointmentForm({
-  ctx, initial, existing, onDone, onCancel,
+  ctx, circles, initial, existing, onDone, onCancel,
 }: {
   ctx: PlannerCtx;
-  initial?: { typeId?: string; date?: string; start?: string; end?: string };
+  circles: Circle[]; // the circles this can be shared with
+  initial?: { typeId?: string; date?: string; start?: string; end?: string; circleId?: string };
   existing?: Appointment;
   onDone: (date?: string) => void; // the saved appointment's date, so the caller can show it on the calendar
   onCancel: () => void;
@@ -43,6 +45,8 @@ export default function AppointmentForm({
   // One-off activity and place, typed for this appointment only; null while the saved lists are in use.
   const [customActivity, setCustomActivity] = useState<string | null>(existing?.custom_activity ?? null);
   const [customPlace, setCustomPlace] = useState<string | null>(existing?.custom_place ?? null);
+  // Shared with this circle, or "" for private. New ones start in the circle being viewed.
+  const [circleId, setCircleId] = useState(existing ? existing.circle_id ?? "" : initial?.circleId ?? "");
   const [date, setDate] = useState(exStart?.toISODate() ?? initial?.date ?? tomorrow);
   const [start, setStart] = useState(exStart?.toFormat("HH:mm") ?? initial?.start ?? `${pad(nextHour.hour)}:00`);
   const [end, setEnd] = useState(exEnd?.toFormat("HH:mm") ?? initial?.end ?? `${pad((nextHour.hour + 1) % 24)}:00`);
@@ -114,6 +118,7 @@ export default function AppointmentForm({
     const { data, error } = await supabase
       .from("appointments")
       .select(APPT_FIELDS)
+      .eq("user_id", ctx.userId) // only my own can clash; shared ones from others are readable but not mine
       .neq("status", "cancelled")
       .lt("starts_at", toISO)
       .gt("ends_at", fromISO);
@@ -145,6 +150,8 @@ export default function AppointmentForm({
       custom_activity: typeId ? null : customActivity?.trim() || null,
       place_id: placeId || null,
       custom_place: placeId ? null : customPlace?.trim() || null,
+      // Sent only when the database has the sharing columns.
+      ...(ctx.sharing ? { circle_id: circleId || null } : {}),
       title: finalTitle,
       status,
       team: team.trim() || null,
@@ -156,7 +163,7 @@ export default function AppointmentForm({
   async function handleDbError(err: { code?: string; message?: string }) {
     if (err.code === "42703" || err.code === "PGRST204" || err.code === "23502") {
       // Unknown column, or activity still required: the custom activity/place migration has not been run.
-      setError("A one-off activity or place needs a one-time database update first: run supabase/migrations/0003_custom_activity_place.sql in the Supabase SQL editor.");
+      setError("A one-off activity or place needs a one-time database update first: run supabase/migrations/0003_custom_activity_place.sql (or 0006_sharing.sql, if you are sharing with a circle) in the Supabase SQL editor.");
     } else if (isOverlapError(err)) {
       setError(`Another ${type?.name ?? "appointment of this type"} was just saved at an overlapping time, possibly from another device. Nothing was saved. Pick a different time.`);
     } else {
@@ -449,6 +456,19 @@ export default function AppointmentForm({
           </div>
         )}
       </fieldset>
+
+      {ctx.sharing && circles.length > 0 && (
+        <fieldset className="field">
+          <legend>Share with</legend>
+          <div className="chips chips-xs" style={{ marginTop: 0 }}>
+            <button type="button" className={`chip ${!circleId ? "is-selected" : ""}`} aria-pressed={!circleId} onClick={() => setCircleId("")}>Just me</button>
+            {circles.map((c) => (
+              <button type="button" key={c.id} className={`chip ${circleId === c.id ? "is-selected" : ""}`} aria-pressed={circleId === c.id} onClick={() => setCircleId(c.id)}>{c.name}</button>
+            ))}
+          </div>
+          {circleId && <span className="hint">Everyone in {circles.find((c) => c.id === circleId)?.name} can see this. Only you can change it.</span>}
+        </fieldset>
+      )}
 
       <label className="field"><span>Notes <span className="muted">(optional)</span></span><textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Anything to remember: what to bring, who to call" /></label>
 

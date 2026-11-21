@@ -101,6 +101,15 @@ h1, h2, h3 { margin: 0; line-height: 1.2; }
 }
 button.brand { border: 0; background: none; padding: 0; cursor: pointer; }
 .brand { font-weight: 700; letter-spacing: -.01em; font-size: 18px; color: var(--accent-text); }
+/* Whose calendar: Mine, or one of your circles; then the circle's members as faces to filter by. */
+.scope-bar { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; margin-bottom: 8px; }
+.scope-bar .chip { min-height: 26px; padding: 0 10px; font-size: 12px; }
+.scope-faces { display: flex; gap: 4px; margin-left: 6px; }
+.face { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: var(--a-bg); color: var(--a-ink); font-size: 11px; font-weight: 700; cursor: pointer; }
+.face.is-off { opacity: .35; }
+/* On a shared item: the initial of the person it belongs to, in their colour. */
+.who { display: inline-grid; place-items: center; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px; background: var(--a-bg); color: var(--a-ink); font-size: 9px; font-weight: 700; line-height: 1; flex-shrink: 0; }
+.agenda-appt .who, .day-task .who { min-width: 20px; height: 20px; border-radius: 10px; font-size: 11px; }
 /* Week / Day switch in the calendar toolbars. */
 .view-toggle { display: inline-flex; padding: 2px; gap: 2px; border-radius: 999px; background: var(--surface-2); flex-shrink: 0; }
 .view-toggle button { border: 0; background: none; min-height: 28px; padding: 0 12px; border-radius: 999px; font-size: 13px; color: var(--ink-2); cursor: pointer; }
@@ -108,8 +117,13 @@ button.brand { border: 0; background: none; padding: 0; cursor: pointer; }
 .count { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; font-size: 11px; margin-left: 6px; }
 .count-alert { background: var(--danger); color: var(--surface); }
 .topbar-right { display: flex; gap: 8px; align-items: center; margin-left: auto; }
-.btn-add { padding: 0 18px; border-radius: 999px; }
-.btn-add .count { margin-left: 2px; }
+/* Add floats at the bottom right on every screen size: a small round button, icon only; the label stays for screen readers. */
+.btn-add { position: fixed; right: 14px; bottom: 16px; z-index: 30; width: 46px; min-height: 46px; padding: 0; border-radius: 50%; box-shadow: 0 4px 14px rgba(40, 20, 120, .45); }
+.btn-add .add-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.btn-add .add-plus { width: 22px; height: 22px; }
+.btn-add .count { position: absolute; top: -4px; right: -4px; margin: 0; box-shadow: 0 0 0 2px var(--bg); }
+/* While a panel is open it holds the form; Add would sit on top of its save bar. */
+.app:has(.panel) .btn-add { display: none; }
 /* The plus turns into a close mark while the menu is open. */
 .add-plus { transition: rotate .2s cubic-bezier(.16, 1, .3, 1); }
 .btn-add[aria-expanded="true"] .add-plus { rotate: 45deg; }
@@ -122,6 +136,8 @@ button.brand { border: 0; background: none; padding: 0; cursor: pointer; }
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow);
   transform-origin: top right; animation: add-menu-in .18s cubic-bezier(.16, 1, .3, 1);
 }
+/* The Add menu rises above its floating button. */
+.add-menu { position: fixed; top: auto; right: 14px; bottom: 72px; width: min(300px, calc(100vw - 32px)); transform-origin: bottom right; }
 .add-item { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 12px; border: 0; background: none; border-radius: 14px; cursor: pointer; text-align: left; }
 .add-item:hover, .add-item:focus-visible { background: var(--surface-2); }
 .add-icon { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 12px; flex-shrink: 0; background: var(--accent-soft); color: var(--accent-text); }
@@ -226,11 +242,7 @@ button.avatar:hover { background: var(--accent-hover); }
 .week-col.is-today { background: var(--accent-soft); }
 .week-hours { display: flex; flex-direction: column; }
 .hour-label { height: var(--hour-px); font-size: 11px; line-height: 14px; color: var(--muted); text-align: right; padding: 0 8px 0 4px; transform: translateY(-7px); position: relative; }
-.week-col {
-  position: relative; background: var(--bg); border-radius: 14px; cursor: copy;
-  /* A light lift, so the columns stand apart from the sky behind them. */
-  box-shadow: 0 1px 2px light-dark(rgba(40, 20, 120, .12), rgba(0, 0, 0, .4)), 0 4px 12px light-dark(rgba(40, 20, 120, .16), rgba(0, 0, 0, .45));
-}
+.week-col { position: relative; background: var(--bg); border-radius: 14px; cursor: copy; }
 .week-col .hour-cell:first-child { border-top-color: transparent; }
 .hour-cell { height: var(--hour-px); border-top: 1px solid var(--line); pointer-events: none; }
 .week-col.is-today .hour-cell { background: transparent; }
@@ -505,20 +517,16 @@ p.outcome-reason { display: block; }
   .panel {
     position: fixed; inset: 0; width: 100%; height: 100%; z-index: 50; border-left: 0; top: 0;
   }
-  /* On phones Add is a small round button: icon only, the label stays for screen readers. */
-  .btn-add { position: fixed; right: 14px; bottom: 16px; z-index: 30; width: 46px; min-height: 46px; padding: 0; border-radius: 50%; box-shadow: 0 4px 14px rgba(40, 20, 120, .45); }
-  .btn-add .add-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
-  .btn-add .add-plus { width: 22px; height: 22px; }
-  .btn-add .count { position: absolute; top: -4px; right: -4px; margin: 0; box-shadow: 0 0 0 2px var(--bg); }
   .toolbar-title { font-size: 17px; flex-basis: 100%; order: -1; }
   /* Week grid goes edge to edge on phones: no card around it, and a narrower hours column. */
   /* The week grid runs to the bottom of the screen, under the floating nav and Add button. */
   .content:has(.week) { padding-bottom: 0; }
+  /* On phones the columns sit straight on the sky, so a light lift sets them apart. On desktop the card around the grid does that. */
+  .week-col { box-shadow: 0 1px 2px light-dark(rgba(40, 20, 120, .12), rgba(0, 0, 0, .4)), 0 4px 12px light-dark(rgba(40, 20, 120, .16), rgba(0, 0, 0, .45)); }
   .week-scroll { margin: 0 -12px; padding: 0; background: none; border: 0; border-radius: 0; box-shadow: none; scrollbar-width: none; }
   .week-grid { grid-template-columns: 44px repeat(7, minmax(110px, 1fr)); min-width: 882px; padding-right: 12px; }
   .hour-label { padding: 0 6px 0 0; }
   .field-row { grid-template-columns: 1fr 1fr; }
-  .add-menu { position: fixed; top: auto; right: 14px; bottom: 72px; width: min(300px, calc(100vw - 32px)); transform-origin: bottom right; }
   .toasts { bottom: 86px; }
 }
 

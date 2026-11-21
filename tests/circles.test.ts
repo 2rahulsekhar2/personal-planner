@@ -17,3 +17,21 @@ describe("circle invites", () => {
     expect(expiryLabel(at(24 * 6 + 1), now)).toBe("Expires in 6 days");
   });
 });
+
+import { seatsOf } from "@/lib/circles";
+
+describe("seatsOf", () => {
+  it("puts the owner first, then orders by email, with a colour and initial each", () => {
+    const seats = seatsOf({
+      id: "c", name: "Family", owner_id: "b",
+      circle_members: [
+        { user_id: "a", email: "zed@x.com", role: "member" },
+        { user_id: "b", email: "rahul@x.com", role: "owner" },
+        { user_id: "c", email: "anu@x.com", role: "viewer" },
+      ],
+    });
+    expect(seats.map((s) => s.user_id)).toEqual(["b", "c", "a"]);
+    expect(seats.map((s) => s.letter)).toEqual(["R", "A", "Z"]);
+    expect(new Set(seats.map((s) => s.color)).size).toBe(3);
+  });
+});

@@ -19,7 +19,7 @@ import AccountMenu from "./AccountMenu";
 import { useDismiss } from "./useDismiss";
 import CirclesView from "./CirclesView";
 import { useCircles } from "./useCircles";
-import { isOpen } from "@/lib/circles";
+import { isOpen, seatsOf } from "@/lib/circles";
 import { registerServiceWorker } from "@/lib/push-client";
 
 export type View = "week" | "agenda" | "tasks" | "types" | "places" | "settings" | "circles";
@@ -63,6 +63,35 @@ export default function Planner() {
   const [inviteToken, setInviteToken] = useState<string | null>(null);
   const myEmail = ctx.email?.toLowerCase();
   const pendingInvites = circles.invites.filter((i) => i.email === myEmail && isOpen(i)).length;
+
+  // Whose calendar is showing: "mine" (what I created) or one circle (everything shared with it).
+  const [scope, setScope] = useState("mine");
+  const [face, setFace] = useState<string | null>(null); // in a circle: show only this member's items
+  const circle = circles.circles.find((c) => c.id === scope);
+  const seats = useMemo(() => (circle ? seatsOf(circle) : []), [circle]);
+  const inScope = (x: { user_id: string; circle_id?: string | null }) =>
+    circle ? x.circle_id === circle.id && (!face || x.user_id === face) : x.user_id === ctx.userId;
+  // The calendar views read through this; everything else (forms, the Tasks page) keeps the full context.
+  const viewCtx = { ...ctx, appointments: appointments.filter(inScope), tasks: tasks.filter(inScope) };
+  const myTasks = tasks.filter((t) => t.user_id === ctx.userId);
+  // In a circle view each item carries its owner's initial and colour.
+  const whoOf = (userId: string) => (circle ? seats.find((s) => s.user_id === userId) : undefined);
+
+  const scopeBar = ctx.sharing && circles.circles.length > 0 && (
+    <div className="scope-bar" role="group" aria-label="Whose calendar">
+      <button className={`chip ${!circle ? "is-selected" : ""}`} aria-pressed={!circle} onClick={() => { setScope("mine"); setFace(null); }}>Mine</button>
+      {circles.circles.map((c) => (
+        <button key={c.id} className={`chip ${circle?.id === c.id ? "is-selected" : ""}`} aria-pressed={circle?.id === c.id} onClick={() => { setScope(c.id); setFace(null); }}>{c.name}</button>
+      ))}
+      {circle && seats.length > 1 && (
+        <span className="scope-faces">
+          {seats.map((s) => (
+            <button key={s.user_id} className={`face act-${s.color} ${face && face !== s.user_id ? "is-off" : ""}`} aria-pressed={face === s.user_id} aria-label={`Only ${s.email}`} title={s.email} onClick={() => setFace(face === s.user_id ? null : s.user_id)}>{s.letter}</button>
+          ))}
+        </span>
+      )}
+    </div>
+  );
   // A dot on the gear warns when this device will not get reminders but could. Unsupported browsers get no dot: nothing to fix there.
   const [status] = useNotificationStatus();
   const remindersOff = !!status && status !== "enabled" && status !== "unsupported";
@@ -98,7 +127,7 @@ export default function Planner() {
     });
   }, [day, tz, setRange]);
 
-  const overdueCount = useMemo(() => tasks.filter((t) => isTaskOverdue(t, tz)).length, [tasks, tz]);
+  const overdueCount = useMemo(() => tasks.filter((t) => t.user_id === ctx.userId && isTaskOverdue(t, tz)).length, [tasks, tz, ctx.userId]);
 
   const closePanel = () => setPanel(null);
 
@@ -134,22 +163,32 @@ export default function Planner() {
   let panelTitle = "";
   if (panel?.kind === "new-appt") {
     panelTitle = "New appointment";
-    panelBody = <AppointmentForm ctx={ctx} initial={panel} onDone={showSaved} onCancel={closePanel} />;
+    panelBody = <AppointmentForm ctx={ctx} circles={circles.circles} initial={{ ...panel, circleId: circle?.id }} onDone={showSaved} onCancel={closePanel} />;
   } else if (panel?.kind === "edit-appt") {
     const a = appointments.find((x) => x.id === panel.id);
     panelTitle = "Edit appointment";
-    panelBody = a ? <AppointmentForm ctx={ctx} existing={a} onDone={showSaved} onCancel={() => setPanel({ kind: "appt", id: a.id })} /> : null;
+    panelBody = a ? <AppointmentForm ctx={ctx} circles={circles.circles} existing={a} onDone={showSaved} onCancel={() => setPanel({ kind: "appt", id: a.id })} /> : null;
   } else if (panel?.kind === "appt") {
     const a = appointments.find((x) => x.id === panel.id);
     panelTitle = "Appointment";
-    panelBody = a ? <AppointmentDetails key={a.id} ctx={ctx} appt={a} onEdit={() => setPanel({ kind: "edit-appt", id: a.id })} onClose={closePanel} /> : <p className="muted">This appointment is no longer in view.</p>;
+    panelBody = a ? <AppointmentDetails key={a.id} ctx={ctx} circles={circles.circles} appt={a} onEdit={() => setPanel({ kind: "edit-appt", id: a.id })} onClose={closePanel} /> : <p className="muted">This appointment is no longer in view.</p>;
   } else if (panel?.kind === "new-task") {
     panelTitle = "New task";
-    panelBody = <TaskForm ctx={ctx} date={panel.date} onDone={closePanel} />;
+    panelBody = <TaskForm ctx={ctx} circles={circles.circles} circleId={circle?.id} date={panel.date} onDone={closePanel} />;
   } else if (panel?.kind === "edit-task") {
     const t = tasks.find((x) => x.id === panel.id);
     panelTitle = "Task";
-    panelBody = t ? <TaskForm ctx={ctx} existing={t} onDone={closePanel} /> : null;
+    const theirs = t && t.user_id !== ctx.userId;
+    const from = theirs ? circles.circles.find((c) => c.id === t.circle_id) : undefined;
+    // Someone else's shared task is read-only here.
+    panelBody = !t ? null : theirs ? (
+      <div className="stack">
+        <h3>{t.title}</h3>
+        <p className="muted">Due {t.due_date}{t.due_time ? `, ${t.due_time.slice(0, 5)}` : ""}. {t.state === "pending" ? "Not done yet." : t.state === "completed" ? "Done." : "Dismissed."}</p>
+        {t.notes && <div className="note-block">{t.notes}</div>}
+        <p className="hint">Shared in {from?.name ?? "a circle"} by {from?.circle_members.find((m) => m.user_id === t.user_id)?.email ?? "another member"}. Only they can change it.</p>
+      </div>
+    ) : <TaskForm ctx={ctx} circles={circles.circles} existing={t} onDone={closePanel} />;
   }
 
   if (loading || !view) {
@@ -169,33 +208,35 @@ export default function Planner() {
             {remindersOff && <span className="alert-dot" aria-hidden />}
           </button>
           <AccountMenu ctx={ctx} invites={pendingInvites} onCircles={() => setView("circles")} />
-          <div className="add-wrap" ref={addRef}>
-            <button className="btn btn-primary btn-add" aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(!menu)}>
-              <svg className="add-plus" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
-              <span className="add-text">Add</span>
-              {overdueCount > 0 && <span className="count count-alert" aria-label={`${overdueCount} overdue tasks`}>{overdueCount}</span>}
-            </button>
-            {menu && (
-              <div className="pop-menu add-menu" role="menu" aria-label="Add">
-                {[ADD_ITEMS.slice(0, 2), ADD_ITEMS.slice(2)].map((tier, n) => (
-                  <div key={n} className={n === 0 ? "add-primary" : "add-support"}>
-                    {tier.map((it, i) => (
-                      <button key={it.key} className={n === 0 ? "add-tile" : "add-mini"} role="menuitem" autoFocus={n === 0 && i === 0} onClick={() => { setMenu(false); pick(it.key); }}>
-                        <span className="add-icon" aria-hidden>
-                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{it.icon}</svg>
-                        </span>
-                        <span className="add-label">{it.label}</span>
-                        {it.hint && <span className="add-hint">{it.hint}</span>}
-                        {it.key === "task" && overdueCount > 0 && <span className="count count-alert" aria-label={`${overdueCount} overdue`}>{overdueCount}</span>}
-                      </button>
-                    ))}
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
         </div>
       </header>
+
+      {/* Outside the header: the header blurs what is behind it, and a blurred ancestor would pin this fixed button to itself. */}
+      <div className="add-wrap" ref={addRef}>
+        <button className="btn btn-primary btn-add" aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(!menu)}>
+          <svg className="add-plus" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
+          <span className="add-text">Add</span>
+          {overdueCount > 0 && <span className="count count-alert" aria-label={`${overdueCount} overdue tasks`}>{overdueCount}</span>}
+        </button>
+        {menu && (
+          <div className="pop-menu add-menu" role="menu" aria-label="Add">
+            {[ADD_ITEMS.slice(0, 2), ADD_ITEMS.slice(2)].map((tier, n) => (
+              <div key={n} className={n === 0 ? "add-primary" : "add-support"}>
+                {tier.map((it, i) => (
+                  <button key={it.key} className={n === 0 ? "add-tile" : "add-mini"} role="menuitem" autoFocus={n === 0 && i === 0} onClick={() => { setMenu(false); pick(it.key); }}>
+                    <span className="add-icon" aria-hidden>
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">{it.icon}</svg>
+                    </span>
+                    <span className="add-label">{it.label}</span>
+                    {it.hint && <span className="add-hint">{it.hint}</span>}
+                    {it.key === "task" && overdueCount > 0 && <span className="count count-alert" aria-label={`${overdueCount} overdue`}>{overdueCount}</span>}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {loadError && (
         <div className="alert alert-error banner" role="alert">
@@ -207,14 +248,14 @@ export default function Planner() {
         <section className="content">
           {view === "week" && (
             <div className="week-layout">
-              <WeekSidebar ctx={ctx} day={day} setDay={setDay} onOpen={(id) => setPanel({ kind: "appt", id })} onOpenTask={(id) => setPanel({ kind: "edit-task", id })} />
-              <WeekView ctx={ctx} day={day} setDay={setDay} onOpen={(id) => setPanel({ kind: "appt", id })} onOpenTask={(id) => setPanel({ kind: "edit-task", id })} onCreate={(date, start, end) => setPanel({ kind: "new-appt", date, start, end })} toggle={toggle} />
+              <WeekSidebar ctx={viewCtx} day={day} setDay={setDay} onOpen={(id) => setPanel({ kind: "appt", id })} onOpenTask={(id) => setPanel({ kind: "edit-task", id })} />
+              <WeekView ctx={viewCtx} whoOf={whoOf} scopeBar={scopeBar} day={day} setDay={setDay} onOpen={(id) => setPanel({ kind: "appt", id })} onOpenTask={(id) => setPanel({ kind: "edit-task", id })} onCreate={(date, start, end) => setPanel({ kind: "new-appt", date, start, end })} toggle={toggle} />
             </div>
           )}
           {view === "agenda" && (
-            <AgendaView ctx={ctx} day={day} setDay={setDay} onOpen={(id) => setPanel({ kind: "appt", id })} onOpenTask={(id) => setPanel({ kind: "edit-task", id })} toggle={toggle} />
+            <AgendaView ctx={viewCtx} whoOf={whoOf} scopeBar={scopeBar} day={day} setDay={setDay} onOpen={(id) => setPanel({ kind: "appt", id })} onOpenTask={(id) => setPanel({ kind: "edit-task", id })} toggle={toggle} />
           )}
-          {view === "tasks" && <TasksView ctx={ctx} onOpen={(id) => setPanel({ kind: "edit-task", id })} onNew={() => setPanel({ kind: "new-task" })} />}
+          {view === "tasks" && <TasksView ctx={{ ...ctx, tasks: myTasks }} onOpen={(id) => setPanel({ kind: "edit-task", id })} onNew={() => setPanel({ kind: "new-task" })} />}
           {view === "types" && <ActivityTypesView ctx={ctx} />}
           {view === "places" && <PlacesView ctx={ctx} />}
           {view === "settings" && <SettingsView ctx={ctx} />}

@@ -10,6 +10,7 @@ export interface Profile {
 
 export interface ActivityType {
   id: string;
+  user_id: string;
   name: string;
   color: string;
   archived_at: string | null;
@@ -17,6 +18,7 @@ export interface ActivityType {
 
 export interface Place {
   id: string;
+  user_id: string;
   name: string;
   maps_url: string;
   notes: string | null;
@@ -25,6 +27,8 @@ export interface Place {
 
 export interface Appointment {
   id: string;
+  user_id: string; // who created it; only they can change it
+  circle_id?: string | null; // shared with this circle; absent until 0006_sharing.sql has been run
   activity_type_id: string | null; // null when the appointment uses a one-off custom_activity
   place_id: string | null;
   series_id: string | null;
@@ -45,6 +49,8 @@ export interface Appointment {
 
 export interface Task {
   id: string;
+  user_id: string;
+  circle_id?: string | null;
   title: string;
   due_date: string; // yyyy-MM-dd
   due_time: string | null; // HH:mm[:ss]

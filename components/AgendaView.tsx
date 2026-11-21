@@ -5,7 +5,7 @@ import { fmtClock, fmtRange, relativeDayLabel, weekFromToday, todayISO, isTaskOv
 import { TaskChip, visibleAppointments } from "./WeekView";
 
 export default function AgendaView({
-  ctx, day, setDay, onOpen, onOpenTask, toggle,
+  ctx, day, setDay, onOpen, onOpenTask, toggle, whoOf, scopeBar,
 }: {
   ctx: PlannerCtx;
   day: string;
@@ -13,6 +13,8 @@ export default function AgendaView({
   onOpen: (id: string) => void;
   onOpenTask: (id: string) => void;
   toggle: React.ReactNode;
+  whoOf: (userId: string) => { color: string; letter: string; email: string } | undefined; // set in a circle view: marks whose item it is
+  scopeBar: React.ReactNode;
 }) {
   const { tz, typeById, placeById, tasks } = ctx;
   const d = DateTime.fromISO(day, { zone: tz });
@@ -49,6 +51,7 @@ export default function AgendaView({
     ...items.map((a) => {
       const t = typeById.get(a.activity_type_id ?? "");
       const p = a.place_id ? placeById.get(a.place_id) : null;
+      const who = whoOf(a.user_id);
       return {
         at: a.starts_at,
         node: (
@@ -60,7 +63,8 @@ export default function AgendaView({
             </span>
             <span className="agenda-meta">
               <span className="type-label"><span className="swatch" aria-hidden />{t?.name ?? a.custom_activity}</span>
-              {p && <span>· {p.name}</span>}
+              {(p?.name ?? a.custom_place) && <span>· {p?.name ?? a.custom_place}</span>}
+              {who && <span className={`who act-${who.color}`} title={who.email}>{who.letter}</span>}
               {a.team && <span>· {a.team}</span>}
             </span>
           </button>
@@ -87,6 +91,7 @@ export default function AgendaView({
         </div>
         <span className="toolbar-end">{toggle}</span>
       </div>
+      {scopeBar}
 
       <div className="daystrip" role="tablist" aria-label="Days this week">
         {Array.from({ length: 7 }, (_, i) => ws.plus({ days: i })).map((x) => {
@@ -113,11 +118,12 @@ export default function AgendaView({
             const done = t.state !== "pending";
             return (
               <div key={t.id} className={`day-task ${late ? "is-overdue" : ""} ${done ? "is-done" : ""}`}>
-                <button className="day-task-check" disabled={done} aria-label={done ? "Done" : `Mark “${t.title}” done`} onClick={() => ctx.completeTask(t)}>
+                <button className="day-task-check" disabled={done || t.user_id !== ctx.userId} aria-label={done ? "Done" : t.user_id !== ctx.userId ? "Only its owner can mark this done" : `Mark “${t.title}” done`} onClick={() => ctx.completeTask(t)}>
                   {done && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>}
                 </button>
                 <button className="day-task-main" onClick={() => onOpenTask(t.id)}>
                   <span className="day-task-title">{t.title}</span>
+                  {whoOf(t.user_id) && <span className={`who act-${whoOf(t.user_id)!.color}`} title={whoOf(t.user_id)!.email}>{whoOf(t.user_id)!.letter}</span>}
                   <span className="day-task-when">{late ? `Overdue, ${t.due_date === day && t.due_time ? fmtClock(t.due_time) : relativeDayLabel(t.due_date, tz)}` : t.due_time ? fmtClock(t.due_time) : ""}</span>
                 </button>
               </div>

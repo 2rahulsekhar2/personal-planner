@@ -83,7 +83,7 @@ export function TaskChip({ task, tz, onOpen, top }: { task: Task; tz: string; on
 }
 
 export default function WeekView({
-  ctx, day, setDay, onOpen, onOpenTask, onCreate, toggle,
+  ctx, day, setDay, onOpen, onOpenTask, onCreate, toggle, whoOf, scopeBar,
 }: {
   ctx: PlannerCtx;
   day: string;
@@ -92,6 +92,8 @@ export default function WeekView({
   onOpenTask: (id: string) => void;
   onCreate: (date: string, start: string, end: string) => void;
   toggle: React.ReactNode;
+  whoOf: (userId: string) => { color: string; letter: string; email: string } | undefined; // set in a circle view: marks whose item it is
+  scopeBar: React.ReactNode;
 }) {
   const { tz, typeById, placeById, tasks } = ctx;
   const ws = weekFromToday(day, tz);
@@ -120,7 +122,7 @@ export default function WeekView({
     fit();
     window.addEventListener("resize", fit);
     return () => window.removeEventListener("resize", fit);
-  }, []);
+  }, [!!scopeBar]); // the scope bar adds a row above the grid
   const nowTop = ((nowL.hour * 60 + nowL.minute - startHour * 60) / 60) * HOUR_PX;
 
 
@@ -137,6 +139,7 @@ export default function WeekView({
         <button className="btn btn-sm btn-ghost toolbar-end" onClick={() => setDay(today)}>Today</button>
         {toggle}
       </div>
+      {scopeBar}
 
       <div className="week-scroll" ref={gridRef}>
         <div className="week-grid" style={{ ["--hours" as string]: hours.length, ["--hour-px" as string]: `${HOUR_PX}px` }}>
@@ -196,6 +199,7 @@ export default function WeekView({
                   // What fits: under 30px one line; taller cards add the place, then the end time at the bottom edge.
                   const compact = s.height < 30;
                   const placeName = p?.name ?? s.appt.custom_place;
+                  const who = whoOf(s.appt.user_id);
                   const showPlace = !!placeName && s.height > 50;
                   const showEnd = s.height > 66;
                   const titleLines = Math.max(1, Math.floor((s.height - 19 - (showPlace ? 11 : 0) - (showEnd ? 11 : 0)) / 12));
@@ -207,7 +211,7 @@ export default function WeekView({
                       onClick={() => onOpen(s.appt.id)}
                       title={`${s.appt.title}, ${fmtRange(s.appt.starts_at, s.appt.ends_at, tz)}${placeName ? `, ${placeName}` : ""}`}
                     >
-                      <span className="appt-time">{fmtShortTime(s.appt.starts_at, tz)}</span>
+                      <span className="appt-time">{who && <span className={`who act-${who.color}`} title={who.email}>{who.letter}</span>} {fmtShortTime(s.appt.starts_at, tz)}</span>
                       <span className="appt-title" style={compact ? undefined : { WebkitLineClamp: titleLines }}>
                         {s.appt.title}
                         {s.appt.status === "tentative" && <span className="tag">Tentative</span>}
