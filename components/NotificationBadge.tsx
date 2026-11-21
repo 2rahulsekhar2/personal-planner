@@ -24,15 +24,3 @@ export function useNotificationStatus() {
   }, []);
   return [status, setStatus] as const;
 }
-
-export default function NotificationBadge({ onClick }: { onClick: () => void }) {
-  const [status] = useNotificationStatus();
-  if (!status) return null;
-  const ok = status === "enabled";
-  return (
-    <button className={`status-pill ${ok ? "is-ok" : "is-warn"}`} onClick={onClick} title="Notification settings">
-      <span aria-hidden>{ok ? "🔔" : "🔕"}</span>
-      <span className="status-text">{STATUS_LABEL[status]}</span>
-    </button>
-  );
-}

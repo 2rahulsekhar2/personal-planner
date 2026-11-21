@@ -84,17 +84,16 @@ export function usePlanner() {
 
   const loadAppointments = useCallback(
     async (r: { from: string; to: string }) => {
-      const { data, error } = await supabase
-        .from("appointments")
-        .select(APPT_FIELDS)
-        .lt("starts_at", r.to)
-        .gt("ends_at", r.from)
-        .order("starts_at");
+      const query = (fields: string) =>
+        supabase.from("appointments").select(fields).lt("starts_at", r.to).gt("ends_at", r.from).order("starts_at");
+      let { data, error } = await query(`${APPT_FIELDS}, outcome, outcome_reason`);
+      // 42703 = unknown column: the outcome migration has not been run yet. Load without it so the calendar still works.
+      if (error?.code === "42703") ({ data, error } = await query(APPT_FIELDS));
       if (error) {
         setLoadError(error.message);
         return;
       }
-      setAppointments((data ?? []) as Appointment[]);
+      setAppointments((data ?? []) as unknown as Appointment[]);
     },
     [supabase],
   );

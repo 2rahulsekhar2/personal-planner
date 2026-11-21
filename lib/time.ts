@@ -59,6 +59,14 @@ export function startOfWeek(date: string, tz: string): DateTime {
   return DateTime.fromISO(date, { zone: tz }).startOf("week"); // ISO weeks start Monday
 }
 
+// The week view runs in 7-day blocks counted from today, so today is always the first column of its block.
+// Returns the first day of the block that contains `date`.
+export function weekFromToday(date: string, tz: string, today = todayISO(tz)): DateTime {
+  const t = DateTime.fromISO(today, { zone: tz }).startOf("day");
+  const days = Math.round(DateTime.fromISO(date, { zone: tz }).startOf("day").diff(t, "days").days);
+  return t.plus({ days: Math.floor(days / 7) * 7 });
+}
+
 export function relativeDayLabel(date: string, tz: string): string {
   const today = DateTime.now().setZone(tz).startOf("day");
   const d = DateTime.fromISO(date, { zone: tz }).startOf("day");

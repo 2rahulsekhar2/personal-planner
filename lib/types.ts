@@ -35,6 +35,9 @@ export interface Appointment {
   team: string | null;
   notes: string | null;
   reminder_minutes: number | null;
+  // Set by the user afterwards. Absent until supabase/migrations/0002_appointment_outcome.sql has been run.
+  outcome?: "done" | "not_done" | null;
+  outcome_reason?: string | null;
 }
 
 export interface Task {

@@ -5,14 +5,14 @@ import { fmtRange, relativeDayLabel, startOfWeek, todayISO, isTaskOverdue, fmtSh
 import { TaskChip, visibleAppointments } from "./WeekView";
 
 export default function AgendaView({
-  ctx, day, setDay, onOpen, onOpenTask, onWeek,
+  ctx, day, setDay, onOpen, onOpenTask, toggle,
 }: {
   ctx: PlannerCtx;
   day: string;
   setDay: (d: string) => void;
   onOpen: (id: string) => void;
   onOpenTask: (id: string) => void;
-  onWeek: () => void;
+  toggle: React.ReactNode;
 }) {
   const { tz, typeById, placeById, tasks } = ctx;
   const d = DateTime.fromISO(day, { zone: tz });
@@ -52,7 +52,7 @@ export default function AgendaView({
       return {
         at: a.starts_at,
         node: (
-          <button key={a.id} className={`agenda-appt act-${t?.color ?? "slate"} status-${a.status}`} onClick={() => onOpen(a.id)}>
+          <button key={a.id} className={`agenda-appt act-${t?.color ?? "slate"} status-${a.status} ${a.outcome ? `outcome-${a.outcome}` : ""}`} onClick={() => onOpen(a.id)}>
             <span className="agenda-time">{fmtRange(a.starts_at, a.ends_at, tz)}</span>
             <span className="agenda-title">
               {a.title}
@@ -85,7 +85,7 @@ export default function AgendaView({
           <button className="btn" onClick={() => setDay(today)}>Today</button>
           <button className="btn" onClick={() => setDay(d.plus({ days: 1 }).toISODate()!)} aria-label="Next day">›</button>
         </div>
-        <button className="btn btn-ghost" onClick={onWeek}>Week view</button>
+        <span className="toolbar-end">{toggle}</span>
       </div>
 
       <div className="daystrip" role="tablist" aria-label="Days this week">
