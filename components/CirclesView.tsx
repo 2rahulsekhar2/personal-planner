@@ -59,11 +59,37 @@ export default function CirclesView({ ctx, state, linkToken, clearLink }: { ctx:
     }
   }
 
+  // Asks the server to email an addressed invite. Returns "sent", "off" (the app cannot send mail here) or "failed".
+  async function sendMail(token: string): Promise<"sent" | "off" | "failed"> {
+    const res = await fetch("/api/invites/email", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ token }) }).catch(() => null);
+    if (res?.ok) return "sent";
+    if (res?.status === 501) return "off";
+    toast("error", (await res?.json().catch(() => null))?.error ?? "The email could not be sent");
+    return "failed";
+  }
+
+  // "Email it" on an invited row. Where the app cannot send mail, the owner's own mail app opens with the invite written out.
+  async function emailInvite(token: string, to: string, circleName: string, expires: string) {
+    if (busy) return;
+    setBusy(true);
+    const result = await sendMail(token);
+    setBusy(false);
+    if (result === "sent") toast("ok", `Invite emailed to ${to}`);
+    else if (result === "off") {
+      window.location.href = `mailto:${to}?subject=${encodeURIComponent(`Join ${circleName} on Planner`)}&body=${encodeURIComponent(`I've invited you to "${circleName}" on Planner, where we plan together.\n\nOpen this link and sign in with ${to}:\n${inviteLink(token)}\n\nThe invite ${expiryLabel(expires).toLowerCase()}.`)}`;
+    }
+  }
+
   // An empty email makes a one-time link. Either way the link ends up on the clipboard.
   async function invite(circle: string, to: string, role: string, days: number) {
     // p_days is sent only when the database knows it (0009).
-    const token = await run("invite_to_circle", { p_circle: circle, p_email: to, p_role: role, ...(roles && days ? { p_days: days } : {}) }, to.trim() ? `Invite ready for ${to.trim()}` : "");
-    if (typeof token === "string") { setDraft(null); copy(token); }
+    const token = await run("invite_to_circle", { p_circle: circle, p_email: to, p_role: role, ...(roles && days ? { p_days: days } : {}) }, "");
+    if (typeof token !== "string") return;
+    setDraft(null);
+    // An addressed invite is emailed straight away when the app can; otherwise the link goes to the clipboard to share.
+    if (to.trim() && (await sendMail(token)) === "sent") return toast("ok", `Invite emailed to ${to.trim()}`);
+    if (to.trim()) toast("ok", `Invite ready for ${to.trim()}`);
+    copy(token);
   }
 
   async function answer(token: string, accept: boolean, name: string) {
@@ -186,8 +212,7 @@ export default function CirclesView({ ctx, state, linkToken, clearLink }: { ctx:
               </span>
               {owner && (
                 <span className="row-actions">
-                  {/* Planner sends no email itself: this opens the owner's own mail app with the invite written out. */}
-                  {i.email && <a className="btn btn-sm btn-ghost" href={`mailto:${i.email}?subject=${encodeURIComponent(`Join ${c.name} on Planner`)}&body=${encodeURIComponent(`I've invited you to "${c.name}" on Planner, where we plan together.\n\nOpen this link and sign in with ${i.email}:\n${inviteLink(i.token)}\n\nThe invite ${expiryLabel(i.expires_at).toLowerCase()}.`)}`}>Email it</a>}
+                  {i.email && <button className="btn btn-sm btn-ghost" disabled={busy} onClick={() => emailInvite(i.token, i.email!, c.name, i.expires_at)}>Email it</button>}
                   <button className="btn btn-sm btn-ghost" onClick={() => copy(i.token)}>Copy link</button>
                   <button className="btn btn-sm btn-ghost" disabled={busy} onClick={() => run("revoke_invite", { p_invite: i.id }, "Invite withdrawn")}>Withdraw</button>
                 </span>
@@ -224,7 +249,7 @@ export default function CirclesView({ ctx, state, linkToken, clearLink }: { ctx:
               <button type="button" className="btn" disabled={busy} onClick={() => invite(c.id, "", d.role, d.days)}>Copy a one-time link</button>
               <button type="button" className="btn btn-ghost" onClick={() => setDraft(null)}>Cancel</button>
             </div>
-            <p className="hint">Planner sends no email itself: after inviting, press Email it or share the link. They also see the invite when they sign in with this address. A link works for whoever opens it first. A viewer can look, but cannot add, be given tasks, or finish them.</p>
+            <p className="hint">They get the invite by email where email is set up; otherwise press Email it or share the link. They also see it when they sign in with this address. A link works for whoever opens it first. A viewer can look, but cannot add, be given tasks, or finish them.</p>
           </form>
         )}
 
