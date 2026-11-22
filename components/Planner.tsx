@@ -29,7 +29,7 @@ export type PanelState =
   | { kind: "new-appt"; typeId?: string; date?: string; start?: string; end?: string }
   | { kind: "edit-appt"; id: string }
   | { kind: "appt"; id: string }
-  | { kind: "new-task"; date?: string }
+  | { kind: "new-task"; date?: string; time?: string }
   | { kind: "edit-task"; id: string }
   | null;
 
@@ -179,7 +179,7 @@ export default function Planner() {
   let panelTitle = "";
   if (panel?.kind === "new-appt") {
     panelTitle = "New appointment";
-    panelBody = <AppointmentForm ctx={ctx} circles={shareable()} initial={{ ...panel, circleId: startIn }} onDone={showSaved} onCancel={closePanel} />;
+    panelBody = <AppointmentForm key={`${panel.date}T${panel.start}`} ctx={ctx} circles={shareable()} initial={{ ...panel, circleId: startIn }} onDone={showSaved} onCancel={closePanel} />;
   } else if (panel?.kind === "edit-appt") {
     const a = appointments.find((x) => x.id === panel.id);
     panelTitle = "Edit appointment";
@@ -190,7 +190,7 @@ export default function Planner() {
     panelBody = a ? <AppointmentDetails key={a.id} ctx={ctx} circles={live} appt={a} onEdit={() => setPanel({ kind: "edit-appt", id: a.id })} onClose={closePanel} /> : <p className="muted">This appointment is no longer in view.</p>;
   } else if (panel?.kind === "new-task") {
     panelTitle = "New task";
-    panelBody = <TaskForm ctx={ctx} circles={shareable()} circleId={startIn} date={panel.date} onDone={closePanel} />;
+    panelBody = <TaskForm key={`${panel.date}T${panel.time}`} ctx={ctx} circles={shareable()} circleId={startIn} date={panel.date} time={panel.time} onDone={closePanel} />;
   } else if (panel?.kind === "edit-task") {
     const t = tasks.find((x) => x.id === panel.id);
     panelTitle = "Task";
@@ -285,11 +285,11 @@ export default function Planner() {
           {view === "week" && (
             <div className="week-layout">
               <WeekSidebar ctx={viewCtx} day={day} setDay={setDay} onOpen={(id) => setPanel({ kind: "appt", id })} onOpenTask={(id) => setPanel({ kind: "edit-task", id })} />
-              <WeekView ctx={viewCtx} whoOf={whoOf} scopeBar={scopeBar} day={day} setDay={setDay} onOpen={(id) => setPanel({ kind: "appt", id })} onOpenTask={(id) => setPanel({ kind: "edit-task", id })} onCreate={(date, start, end) => setPanel({ kind: "new-appt", date, start, end })} toggle={toggle} />
+              <WeekView ctx={viewCtx} whoOf={whoOf} scopeBar={scopeBar} day={day} setDay={setDay} onOpen={(id) => setPanel({ kind: "appt", id })} onOpenTask={(id) => setPanel({ kind: "edit-task", id })} onCreate={(date, start, end) => setPanel({ kind: "new-appt", date, start, end })} onCreateTask={(date, time) => setPanel({ kind: "new-task", date, time })} toggle={toggle} />
             </div>
           )}
           {view === "agenda" && (
-            <AgendaView ctx={viewCtx} mayFinish={mayFinish} whoOf={whoOf} scopeBar={scopeBar} day={day} setDay={setDay} onOpen={(id) => setPanel({ kind: "appt", id })} onOpenTask={(id) => setPanel({ kind: "edit-task", id })} toggle={toggle} />
+            <AgendaView ctx={viewCtx} mayFinish={mayFinish} whoOf={whoOf} onCreate={(date, start, end) => setPanel({ kind: "new-appt", date, start, end })} onCreateTask={(date, time) => setPanel({ kind: "new-task", date, time })} scopeBar={scopeBar} day={day} setDay={setDay} onOpen={(id) => setPanel({ kind: "appt", id })} onOpenTask={(id) => setPanel({ kind: "edit-task", id })} toggle={toggle} />
           )}
           {view === "tasks" && <TasksView ctx={{ ...ctx, tasks: myTasks }} onOpen={(id) => setPanel({ kind: "edit-task", id })} onNew={() => setPanel({ kind: "new-task" })} />}
           {view === "types" && <ActivityTypesView ctx={ctx} />}

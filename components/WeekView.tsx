@@ -1,5 +1,6 @@
 "use client";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import SlotMenu, { type Slot } from "./SlotMenu";
 import { DateTime } from "luxon";
 import type { PlannerCtx } from "./usePlanner";
 import type { Appointment, Task } from "@/lib/types";
@@ -83,7 +84,7 @@ export function TaskChip({ task, tz, onOpen, top }: { task: Task; tz: string; on
 }
 
 export default function WeekView({
-  ctx, day, setDay, onOpen, onOpenTask, onCreate, toggle, whoOf, scopeBar,
+  ctx, day, setDay, onOpen, onOpenTask, onCreate, onCreateTask, toggle, whoOf, scopeBar,
 }: {
   ctx: PlannerCtx;
   day: string;
@@ -91,6 +92,7 @@ export default function WeekView({
   onOpen: (id: string) => void;
   onOpenTask: (id: string) => void;
   onCreate: (date: string, start: string, end: string) => void;
+  onCreateTask: (date: string, time: string) => void;
   toggle: React.ReactNode;
   whoOf: (userId: string) => { color: string; letter: string; email: string } | undefined; // set in a circle view: marks whose item it is
   scopeBar: React.ReactNode;
@@ -109,6 +111,10 @@ export default function WeekView({
   const nowL = DateTime.now().setZone(tz);
   // The whole day fits the window: each hour gets an equal share of the height left under the day headers.
   const gridRef = useRef<HTMLDivElement>(null);
+  // The empty hour that was pressed, and where: it lights up in the grid and asks what to put there.
+  const [slot, setSlot] = useState<(Slot & { hour: number }) | null>(null);
+  const closeSlot = useCallback(() => setSlot(null), []);
+  const pad = (n: number) => String(n).padStart(2, "0");
   const [HOUR_PX, setHourPx] = useState(24);
   useLayoutEffect(() => {
     const fit = () => {
@@ -185,12 +191,12 @@ export default function WeekView({
                   if (e.target !== e.currentTarget) return;
                   const y = e.nativeEvent.offsetY;
                   const h = Math.min(23, startHour + Math.floor(y / HOUR_PX));
-                  const pad = (n: number) => String(n).padStart(2, "0");
-                  onCreate(iso, `${pad(h)}:00`, `${pad((h + 1) % 24)}:00`);
+                  setSlot({ iso, hour: h, start: `${pad(h)}:00`, end: `${pad((h + 1) % 24)}:00`, x: e.clientX, y: e.clientY });
                 }}
                 aria-label={`${d.toFormat("cccc d LLLL")}`}
               >
                 {hours.map((h) => <div key={h} className="hour-cell" aria-hidden />)}
+                {slot?.iso === iso && <div className="slot-ghost" style={{ top: (slot.hour - startHour) * HOUR_PX, height: HOUR_PX }} aria-hidden>{DateTime.fromObject({ hour: slot.hour }).toFormat("h a")}</div>}
                 {iso === today && nowTop >= 0 && nowTop <= hours.length * HOUR_PX && <div className="now-line" style={{ top: nowTop }} aria-hidden />}
                 {dayTasks.map(({ t, top }) => <TaskChip key={t.id} task={t} tz={tz} top={top} onOpen={() => onOpenTask(t.id)} />)}
                 {segs.map((s) => {
@@ -232,6 +238,7 @@ export default function WeekView({
           })}
         </div>
       </div>
+      {slot && <SlotMenu slot={slot} onClose={closeSlot} onAppointment={() => { setSlot(null); onCreate(slot.iso, slot.start, slot.end); }} onTask={() => { setSlot(null); onCreateTask(slot.iso, slot.start); }} />}
     </div>
   );
 }
