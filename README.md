@@ -20,7 +20,7 @@ tasks never block time, and reminder status is shown honestly per device.
 
 ## Setup (about 20 minutes)
 
-1. **Supabase.** Create a free project at supabase.com. In *SQL Editor*, run `supabase/migrations/0001_init.sql`, then `0002_appointment_outcome.sql`, `0003_custom_activity_place.sql`, `0004_custom_activity_refs.sql`, `0005_circles.sql`, `0006_sharing.sql`, `0007_activity.sql`, `0008_people.sql`, `0009_roles.sql` and `0010_grants.sql` from the same folder, in that order.
+1. **Supabase.** Create a free project at supabase.com. In *SQL Editor*, run `supabase/migrations/0001_init.sql`, then `0002_appointment_outcome.sql`, `0003_custom_activity_place.sql`, `0004_custom_activity_refs.sql`, `0005_circles.sql`, `0006_sharing.sql`, `0007_activity.sql`, `0008_people.sql`, `0009_roles.sql`, `0010_grants.sql` and `0011_circle_gaps.sql` from the same folder, in that order.
 2. **Sign-in.** In *Authentication → Providers*, email (magic link) is on by default. To add Google, enable the Google provider and paste a Google OAuth client ID/secret (Google Cloud Console → Credentials → OAuth client, redirect URI shown by Supabase). In *Authentication → URL Configuration*, set Site URL to your Vercel URL and add `https://YOUR-APP.vercel.app/**` (and `http://localhost:3000/**` for local dev) to Redirect URLs. The wildcard is needed because the password-reset link adds a query string to `/auth/callback`.
 3. **Push keys.** Run `npx web-push generate-vapid-keys`.
 4. **Vercel.** Import this repo at vercel.com/new and add the variables from `.env.example`. Deploy.

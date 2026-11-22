@@ -20,7 +20,7 @@ import { useDismiss } from "./useDismiss";
 import CirclesView from "./CirclesView";
 import ActivityView from "./ActivityView";
 import { useCircles } from "./useCircles";
-import { canAdd, isOpen, seatsOf } from "@/lib/circles";
+import { canAdd, isCurrent, isOpen, seatsOf } from "@/lib/circles";
 import { registerServiceWorker } from "@/lib/push-client";
 
 export type View = "week" | "agenda" | "tasks" | "types" | "places" | "settings" | "circles" | "activity";
@@ -71,10 +71,12 @@ export default function Planner() {
   // Whose calendar is showing: "mine" (what I created) or one circle (everything shared with it).
   const [scope, setScope] = useState("mine");
   const [face, setFace] = useState<string | null>(null); // in a circle: show only this member's items
-  const circle = circles.circles.find((c) => c.id === scope);
+  // Circles I am in now. One where my access has ended still shows on the Circles page, so I can leave it, and nowhere else.
+  const live = useMemo(() => circles.circles.filter((c) => c.circle_members.some((m) => m.user_id === ctx.userId && isCurrent(m))), [circles.circles, ctx.userId]);
+  const circle = live.find((c) => c.id === scope);
   const seats = useMemo(() => (circle ? seatsOf(circle) : []), [circle]);
   // The circles I may share with: not those where I am a viewer. An item already shared keeps its circle on offer.
-  const shareable = (keep?: string | null) => circles.circles.filter((c) => canAdd(c, ctx.userId) || c.id === keep);
+  const shareable = (keep?: string | null) => live.filter((c) => canAdd(c, ctx.userId) || c.id === keep);
   const startIn = circle && canAdd(circle, ctx.userId) ? circle.id : undefined;
   // "Mine" is what I created, what I am going to, and what is assigned to me.
   const isMine = (x: { user_id: string; participants?: { user_id: string }[]; assignee_id?: string | null }) =>
@@ -84,13 +86,17 @@ export default function Planner() {
   // The calendar views read through this; everything else (forms, the Tasks page) keeps the full context.
   const viewCtx = { ...ctx, appointments: appointments.filter(inScope), tasks: tasks.filter(inScope) };
   const myTasks = tasks.filter(isMine);
+  // Who may mark a task done: its creator; or, on a shared task that is for me or for anyone, a member who is not a viewer.
+  const mayFinish = (t: { user_id: string; circle_id?: string | null; assignee_id?: string | null }) =>
+    t.user_id === ctx.userId
+    || (ctx.people && (!t.assignee_id || t.assignee_id === ctx.userId) && live.some((c) => c.id === t.circle_id && canAdd(c, ctx.userId)));
   // In a circle view each item carries its owner's initial and colour.
   const whoOf = (userId: string) => (circle ? seats.find((s) => s.user_id === userId) : undefined);
 
-  const scopeBar = ctx.sharing && circles.circles.length > 0 && (
+  const scopeBar = ctx.sharing && live.length > 0 && (
     <div className="scope-bar" role="group" aria-label="Whose calendar">
       <button className={`chip ${!circle ? "is-selected" : ""}`} aria-pressed={!circle} onClick={() => { setScope("mine"); setFace(null); }}>Mine</button>
-      {circles.circles.map((c) => (
+      {live.map((c) => (
         <button key={c.id} className={`chip ${circle?.id === c.id ? "is-selected" : ""}`} aria-pressed={circle?.id === c.id} onClick={() => { setScope(c.id); setFace(null); }}>{c.name}</button>
       ))}
       {circle && seats.length > 1 && (
@@ -181,7 +187,7 @@ export default function Planner() {
   } else if (panel?.kind === "appt") {
     const a = appointments.find((x) => x.id === panel.id);
     panelTitle = "Appointment";
-    panelBody = a ? <AppointmentDetails key={a.id} ctx={ctx} circles={circles.circles} appt={a} onEdit={() => setPanel({ kind: "edit-appt", id: a.id })} onClose={closePanel} /> : <p className="muted">This appointment is no longer in view.</p>;
+    panelBody = a ? <AppointmentDetails key={a.id} ctx={ctx} circles={live} appt={a} onEdit={() => setPanel({ kind: "edit-appt", id: a.id })} onClose={closePanel} /> : <p className="muted">This appointment is no longer in view.</p>;
   } else if (panel?.kind === "new-task") {
     panelTitle = "New task";
     panelBody = <TaskForm ctx={ctx} circles={shareable()} circleId={startIn} date={panel.date} onDone={closePanel} />;
@@ -189,10 +195,10 @@ export default function Planner() {
     const t = tasks.find((x) => x.id === panel.id);
     panelTitle = "Task";
     const theirs = t && t.user_id !== ctx.userId;
-    const from = theirs ? circles.circles.find((c) => c.id === t.circle_id) : undefined;
+    const from = theirs ? live.find((c) => c.id === t.circle_id) : undefined;
     const emailOf = (id?: string | null) => from?.circle_members.find((m) => m.user_id === id)?.email;
     // The person it is for, or anyone when it is unassigned, may finish it.
-    const canFinish = !!t && ctx.people && t.state === "pending" && (!t.assignee_id || t.assignee_id === ctx.userId) && !!from && canAdd(from, ctx.userId);
+    const canFinish = !!t && t.state === "pending" && mayFinish(t);
     // Someone else's shared task: read-only here, apart from marking it done when it is yours to do.
     panelBody = !t ? null : theirs ? (
       <div className="stack">
@@ -283,14 +289,14 @@ export default function Planner() {
             </div>
           )}
           {view === "agenda" && (
-            <AgendaView ctx={viewCtx} whoOf={whoOf} scopeBar={scopeBar} day={day} setDay={setDay} onOpen={(id) => setPanel({ kind: "appt", id })} onOpenTask={(id) => setPanel({ kind: "edit-task", id })} toggle={toggle} />
+            <AgendaView ctx={viewCtx} mayFinish={mayFinish} whoOf={whoOf} scopeBar={scopeBar} day={day} setDay={setDay} onOpen={(id) => setPanel({ kind: "appt", id })} onOpenTask={(id) => setPanel({ kind: "edit-task", id })} toggle={toggle} />
           )}
           {view === "tasks" && <TasksView ctx={{ ...ctx, tasks: myTasks }} onOpen={(id) => setPanel({ kind: "edit-task", id })} onNew={() => setPanel({ kind: "new-task" })} />}
           {view === "types" && <ActivityTypesView ctx={ctx} />}
           {view === "places" && <PlacesView ctx={ctx} />}
           {view === "settings" && <SettingsView ctx={ctx} />}
           {view === "circles" && <CirclesView ctx={ctx} state={circles} linkToken={inviteToken} clearLink={() => setInviteToken(null)} />}
-          {view === "activity" && <ActivityView ctx={ctx} circles={circles.circles} />}
+          {view === "activity" && <ActivityView ctx={ctx} circles={live} />}
         </section>
         {panel && (
           <Panel title={panelTitle} onClose={closePanel}>
