@@ -227,8 +227,10 @@ export default function TaskForm({ ctx, circles, circleId: startCircle, existing
         {existing && existing.state === "pending" && (
           <>
             <button type="button" className="btn" disabled={saving} onClick={() => setState("completed")}>✓ Mark done</button>
-            <button type="button" className="btn btn-ghost" disabled={saving} onClick={() => setState("dismissed")}>Dismiss</button>
-            {existing.series_id && <button type="button" className="btn btn-ghost" disabled={saving} onClick={dismissFollowing}>Dismiss this and following</button>}
+            {/* Dismiss follows the choice above, like Save: this task, or this and the later ones. */}
+            {inRun && scope === "series"
+              ? <button type="button" className="btn btn-ghost" disabled={saving} onClick={dismissFollowing}>Dismiss this and following</button>
+              : <button type="button" className="btn btn-ghost" disabled={saving} onClick={() => setState("dismissed")}>Dismiss</button>}
           </>
         )}
         {existing && existing.state !== "pending" && (

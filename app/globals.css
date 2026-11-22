@@ -432,7 +432,7 @@ textarea { resize: vertical; }
 .days-input { width: 76px !important; }
 .reminder { display: flex; flex-direction: column; }
 /* Brought into view when it opens (useReveal): stop clear of the panel's sticky Save bar. */
-.reveal { scroll-margin: 12px 0 96px; }
+.reveal { scroll-margin: 12px 0 132px; } /* the bar is two rows of buttons on a phone */
 /* Status: two choices, each with a sample block drawn the way the calendar will draw the appointment. */
 .status-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .status-opt { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line-2); border-radius: 14px; background: none; color: inherit; text-align: left; cursor: pointer; }
