@@ -3,7 +3,7 @@ import { useRef, useState } from "react";
 import { DateTime } from "luxon";
 import type { PlannerCtx } from "./usePlanner";
 import type { Task } from "@/lib/types";
-import { seatsOf, type Circle } from "@/lib/circles";
+import { isCurrent, seatsOf, type Circle } from "@/lib/circles";
 import { hhmm, isTaskOverdue, localToDateTime, todayISO } from "@/lib/time";
 
 export default function TaskForm({ ctx, circles, circleId: startCircle, existing, date, onDone }: { ctx: PlannerCtx; circles: Circle[]; circleId?: string; existing?: Task; date?: string; onDone: () => void }) {
@@ -23,7 +23,8 @@ export default function TaskForm({ ctx, circles, circleId: startCircle, existing
   const [circleId, setCircleId] = useState(existing ? existing.circle_id ?? "" : startCircle ?? "");
   // On a shared task: the member it is for, or "" for anyone in the circle.
   const [assignee, setAssignee] = useState(existing?.assignee_id ?? "");
-  const members = seatsOf(circles.find((c) => c.id === circleId) ?? { id: "", name: "", owner_id: "", circle_members: [] });
+  // Viewers, and people whose access has ended, cannot be given a task.
+  const members = seatsOf(circles.find((c) => c.id === circleId) ?? { id: "", name: "", owner_id: "", circle_members: [] }).filter((m) => m.role !== "viewer" && isCurrent(m));
   const share = (id: string) => { setCircleId(id); setAssignee(""); };
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);

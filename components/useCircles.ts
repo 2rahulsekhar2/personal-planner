@@ -11,21 +11,28 @@ export function useCircles(supabase: SupabaseClient) {
   const [userId, setUserId] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [missing, setMissing] = useState(false);
+  // True once the database has enforced roles and temporary access (0009_roles.sql).
+  const [roles, setRoles] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
-    const [c, i] = await Promise.all([
-      supabase.from("circles").select("id, name, owner_id, circle_members(user_id, email, role)").order("created_at"),
-      supabase.from("circle_invites").select("id, token, circle_id, circle_name, inviter_email, email, role, expires_at, accepted_at, declined_at").order("created_at"),
+    const load = (extra: boolean) => Promise.all([
+      supabase.from("circles").select(`id, name, owner_id, circle_members(user_id, email, role${extra ? ", expires_at" : ""})`).order("created_at"),
+      supabase.from("circle_invites").select(`id, token, circle_id, circle_name, inviter_email, email, role, expires_at, accepted_at, declined_at${extra ? ", access_days" : ""}`).order("created_at"),
     ]);
+    // Newest shape first; without 0009 the extra columns do not exist, so fall back.
+    let [c, i] = await load(true);
+    const has = !(c.error ?? i.error);
+    if (!has) [c, i] = await load(false);
     const err = c.error ?? i.error;
     if (err) {
       // 42P01 / PGRST205: the table does not exist yet.
       if (err.code === "42P01" || err.code === "PGRST205") setMissing(true);
       else setError(err.message);
     } else {
-      setCircles((c.data ?? []) as Circle[]);
-      setInvites((i.data ?? []) as CircleInvite[]);
+      setCircles((c.data ?? []) as unknown as Circle[]);
+      setInvites((i.data ?? []) as unknown as CircleInvite[]);
+      setRoles(has);
       setMissing(false);
       setError(null);
     }
@@ -37,7 +44,7 @@ export function useCircles(supabase: SupabaseClient) {
     reload();
   }, [supabase, reload]);
 
-  return { circles, invites, userId, ready, missing, error, reload };
+  return { circles, invites, userId, ready, missing, roles, error, reload };
 }
 
 export type CirclesState = ReturnType<typeof useCircles>;

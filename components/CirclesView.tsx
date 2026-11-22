@@ -2,20 +2,27 @@
 import { useEffect, useState } from "react";
 import type { PlannerCtx } from "./usePlanner";
 import type { CirclesState } from "./useCircles";
-import { expiryLabel, inviteLink, isOpen, seatsOf, type Circle } from "@/lib/circles";
+import { expiryLabel, inviteLink, isCurrent, isOpen, seatsOf, type Circle, type CircleMember } from "@/lib/circles";
 
 const ROLE_LABEL = { owner: "Owner", member: "Member", viewer: "Viewer" } as const;
 
 // What an invite link resolves to, before the person decides.
-interface LinkInvite { circle_name: string; inviter_email: string; role: string; expires_at: string; usable: boolean }
+interface LinkInvite { circle_name: string; inviter_email: string; role: string; expires_at: string; usable: boolean; access_days?: number | null }
+
+// How long an invited person stays. 0: no end.
+const ACCESS = [{ days: 0, label: "For good" }, { days: 1, label: "1 day" }, { days: 7, label: "1 week" }, { days: 30, label: "1 month" }];
+const stay = (days?: number | null) => (days ? ` Your access lasts ${days === 1 ? "1 day" : `${days} days`} from when you join.` : "");
+const dayLabel = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" });
+// "Viewer, until 3 Dec", "Member, access ended".
+const accessNote = (m: CircleMember) => (!m.expires_at ? "" : isCurrent(m) ? `, until ${dayLabel(m.expires_at)}` : ", access ended");
 
 export default function CirclesView({ ctx, state, linkToken, clearLink }: { ctx: PlannerCtx; state: CirclesState; linkToken: string | null; clearLink: () => void }) {
   const { supabase, toast, email } = ctx;
-  const { circles, invites, userId, ready, missing, error, reload } = state;
+  const { circles, invites, userId, ready, missing, roles, error, reload } = state;
   const me = email?.toLowerCase();
   const [busy, setBusy] = useState(false);
   const [newName, setNewName] = useState<string | null>(null); // null: the create form is closed
-  const [draft, setDraft] = useState<{ circle: string; email: string; role: "member" | "viewer" } | null>(null);
+  const [draft, setDraft] = useState<{ circle: string; email: string; role: "member" | "viewer"; days: number } | null>(null);
   const [confirm, setConfirm] = useState<string | null>(null); // key of the action waiting for a second press
   const [link, setLink] = useState<LinkInvite | null | "gone">(null);
 
@@ -50,8 +57,9 @@ export default function CirclesView({ ctx, state, linkToken, clearLink }: { ctx:
   }
 
   // An empty email makes a one-time link. Either way the link ends up on the clipboard.
-  async function invite(circle: string, to: string, role: string) {
-    const token = await run("invite_to_circle", { p_circle: circle, p_email: to, p_role: role }, to.trim() ? `Invite ready for ${to.trim()}` : "");
+  async function invite(circle: string, to: string, role: string, days: number) {
+    // p_days is sent only when the database knows it (0009).
+    const token = await run("invite_to_circle", { p_circle: circle, p_email: to, p_role: role, ...(roles && days ? { p_days: days } : {}) }, to.trim() ? `Invite ready for ${to.trim()}` : "");
     if (typeof token === "string") { setDraft(null); copy(token); }
   }
 
@@ -76,13 +84,13 @@ export default function CirclesView({ ctx, state, linkToken, clearLink }: { ctx:
 
   const forMe = invites.filter((i) => i.email === me && isOpen(i) && i.token !== linkToken);
 
-  const inviteCard = (token: string, name: string, from: string, role: string, expires: string) => (
+  const inviteCard = (token: string, name: string, from: string, role: string, expires: string, days?: number | null) => (
     <section key={token} className="card stack circle-invite">
       <p className="muted">{from} invited you</p>
       <h2 className="circle-name">Join {name}?</h2>
       <p>
         You will see what members share with this circle. Your own calendar stays private unless you share an item.
-        {role === "viewer" ? " You are invited as a viewer." : ""} You can leave at any time.
+        {role === "viewer" ? " You are invited as a viewer: you can look, but not add." : ""}{stay(days)} You can leave at any time.
       </p>
       <div className="form-actions">
         <button className="btn btn-primary" disabled={busy} onClick={() => answer(token, true, name)}>Join {name}</button>
@@ -126,7 +134,7 @@ export default function CirclesView({ ctx, state, linkToken, clearLink }: { ctx:
               {members.length === 1 ? "Just you so far" : `${members.length} members`}
               {sent.length > 0 && `, ${sent.length} invited`}
             </p>
-            {owner && !d && <button className="btn btn-sm" onClick={() => setDraft({ circle: c.id, email: "", role: "member" })}>Invite someone</button>}
+            {owner && !d && <button className="btn btn-sm" onClick={() => setDraft({ circle: c.id, email: "", role: "member", days: 0 })}>Invite someone</button>}
           </div>
         </div>
 
@@ -136,10 +144,12 @@ export default function CirclesView({ ctx, state, linkToken, clearLink }: { ctx:
               <span className={`avatar avatar-sm act-${m.color}`} aria-hidden>{m.letter}</span>
               <span className="grow circle-who">
                 <span className="circle-email">{m.email}</span>
-                <span className="muted">{ROLE_LABEL[m.role]}{m.user_id === userId ? ", you" : ""}</span>
+                <span className="muted">{ROLE_LABEL[m.role]}{accessNote(m)}{m.user_id === userId ? ", you" : ""}</span>
               </span>
               {owner && m.user_id !== userId && (
                 <span className="row-actions">
+                  {roles && <button className="btn btn-sm btn-ghost" disabled={busy} onClick={() => run("update_circle_member", { p_circle: c.id, p_user: m.user_id, p_role: m.role === "viewer" ? "member" : "viewer", p_until: m.expires_at ?? null }, `${m.email} is now a ${m.role === "viewer" ? "member" : "viewer"}`)}>{m.role === "viewer" ? "Make member" : "Make viewer"}</button>}
+                  {roles && m.expires_at && <button className="btn btn-sm btn-ghost" disabled={busy} onClick={() => run("update_circle_member", { p_circle: c.id, p_user: m.user_id, p_role: m.role, p_until: null }, `${m.email} stays for good`)}>Keep for good</button>}
                   {sure(`own:${c.id}:${m.user_id}`, "Make owner", "Hand over", () => run("transfer_circle", { p_circle: c.id, p_user: m.user_id }, `${m.email} now owns ${c.name}`))}
                   {sure(`rm:${c.id}:${m.user_id}`, "Remove", "Remove", () => run("remove_circle_member", { p_circle: c.id, p_user: m.user_id }, `${m.email} removed`))}
                 </span>
@@ -165,7 +175,7 @@ export default function CirclesView({ ctx, state, linkToken, clearLink }: { ctx:
 
         {/* Adding a seat: while this is open, the new seat previews on the ring above. */}
         {owner && d && (
-          <form className="seat-form" onSubmit={(e) => { e.preventDefault(); invite(c.id, d.email, d.role); }}>
+          <form className="seat-form" onSubmit={(e) => { e.preventDefault(); invite(c.id, d.email, d.role, d.days); }}>
             <input type="email" required value={d.email} onChange={(e) => setDraft({ ...d, email: e.target.value })} placeholder="Their email" aria-label="Their email" autoFocus />
             <div className="row seat-role">
               <span className="muted">Joins as</span>
@@ -175,12 +185,22 @@ export default function CirclesView({ ctx, state, linkToken, clearLink }: { ctx:
                 ))}
               </span>
             </div>
+            {roles && (
+              <div className="row seat-role">
+                <span className="muted">Stays</span>
+                <span className="chips chips-xs" role="group" aria-label="How long they stay">
+                  {ACCESS.map((a) => (
+                    <button key={a.days} type="button" className={`chip ${d.days === a.days ? "is-selected" : ""}`} aria-pressed={d.days === a.days} onClick={() => setDraft({ ...d, days: a.days })}>{a.label}</button>
+                  ))}
+                </span>
+              </div>
+            )}
             <div className="row">
               <button className="btn btn-primary" disabled={busy}>Invite</button>
-              <button type="button" className="btn" disabled={busy} onClick={() => invite(c.id, "", d.role)}>Copy a one-time link</button>
+              <button type="button" className="btn" disabled={busy} onClick={() => invite(c.id, "", d.role, d.days)}>Copy a one-time link</button>
               <button type="button" className="btn btn-ghost" onClick={() => setDraft(null)}>Cancel</button>
             </div>
-            <p className="hint">No email is sent: they see the invite when they sign in with this address. A link works for whoever opens it first. Roles take effect once sharing is added.</p>
+            <p className="hint">No email is sent: they see the invite when they sign in with this address. A link works for whoever opens it first. A viewer can look, but cannot add, be given tasks, or finish them.</p>
           </form>
         )}
 
@@ -206,9 +226,9 @@ export default function CirclesView({ ctx, state, linkToken, clearLink }: { ctx:
 
       {link === "gone" && <div className="alert alert-warn">That invite link doesn’t work any more. Ask for a new one. <button className="link" onClick={clearLink}>Dismiss</button></div>}
       {link && link !== "gone" && linkToken && (link.usable
-        ? inviteCard(linkToken, link.circle_name, link.inviter_email, link.role, link.expires_at)
+        ? inviteCard(linkToken, link.circle_name, link.inviter_email, link.role, link.expires_at, link.access_days)
         : <div className="alert alert-warn">The invite to {link.circle_name} can’t be used: it was already used, has expired, is for a different email address, or you are already a member. <button className="link" onClick={clearLink}>Dismiss</button></div>)}
-      {forMe.map((i) => inviteCard(i.token, i.circle_name, i.inviter_email, i.role, i.expires_at))}
+      {forMe.map((i) => inviteCard(i.token, i.circle_name, i.inviter_email, i.role, i.expires_at, i.access_days))}
 
       {newName !== null && (
         <form className="card stack" onSubmit={async (e) => {

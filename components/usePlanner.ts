@@ -26,6 +26,8 @@ export function usePlanner() {
   const [sharing, setSharing] = useState(false);
   // True once the database also has who-is-going and task assignment (0008_people.sql).
   const [people, setPeople] = useState(false);
+  // True once the database also has busy-only sharing and replies (0009_roles.sql).
+  const [replies, setReplies] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [types, setTypes] = useState<ActivityType[]>([]);
   const [places, setPlaces] = useState<Place[]>([]);
@@ -105,6 +107,7 @@ export function usePlanner() {
       // relation), so on any error step back one migration at a time; the calendar must load either way. A real
       // outage fails every shape and is reported below.
       const shapes = [
+        `${APPT_FIELDS}, outcome, outcome_reason, custom_activity, custom_place, circle_id, busy_only, participants:appointment_participants(user_id, reply)`,
         `${APPT_FIELDS}, outcome, outcome_reason, custom_activity, custom_place, circle_id, participants:appointment_participants(user_id)`,
         `${APPT_FIELDS}, outcome, outcome_reason, custom_activity, custom_place, circle_id`,
         `${APPT_FIELDS}, outcome, outcome_reason, custom_activity, custom_place`,
@@ -114,13 +117,20 @@ export function usePlanner() {
       let shape = 0;
       let { data, error } = await query(shapes[0]);
       while (error && shape < shapes.length - 1) ({ data, error } = await query(shapes[++shape]));
-      setPeople(shape === 0 && !error);
-      setSharing(shape <= 1 && !error);
+      setReplies(shape === 0 && !error);
+      setPeople(shape <= 1 && !error);
+      setSharing(shape <= 2 && !error);
       if (error) {
         setLoadError(error.message);
         return;
       }
-      setAppointments((data ?? []) as unknown as Appointment[]);
+      // Other members' busy-only appointments are not readable rows: a function hands over their hours, and each
+      // becomes a block that says "Busy" and nothing else.
+      const blocks = shape === 0 ? await supabase.rpc("circle_busy_blocks", { p_from: r.from, p_to: r.to }) : null;
+      const busy = ((blocks?.data ?? []) as Pick<Appointment, "id" | "user_id" | "circle_id" | "starts_at" | "ends_at">[]).map((b): Appointment => ({
+        ...b, busy: true, title: "Busy", status: "confirmed", activity_type_id: null, place_id: null, series_id: null, team: null, notes: null, reminder_minutes: null,
+      }));
+      setAppointments([...((data ?? []) as unknown as Appointment[]), ...busy].sort((x, y) => x.starts_at.localeCompare(y.starts_at)));
     },
     [supabase],
   );
@@ -175,6 +185,7 @@ export function usePlanner() {
     userId,
     sharing,
     people,
+    replies,
     profile,
     setProfile,
     tz,
