@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { expiryLabel, isOpen } from "@/lib/circles";
+import { canAdd, expiryLabel, isCurrent, isOpen, type Circle } from "@/lib/circles";
 
 const now = Date.UTC(2026, 10, 21, 12);
 const at = (hours: number) => new Date(now + hours * 3600000).toISOString();
@@ -33,5 +33,25 @@ describe("seatsOf", () => {
     expect(seats.map((s) => s.user_id)).toEqual(["b", "c", "a"]);
     expect(seats.map((s) => s.letter)).toEqual(["R", "A", "Z"]);
     expect(new Set(seats.map((s) => s.color)).size).toBe(3);
+  });
+});
+
+describe("circle access", () => {
+  const circle: Circle = {
+    id: "c", name: "Family", owner_id: "o",
+    circle_members: [
+      { user_id: "o", email: "o@x.in", role: "owner" },
+      { user_id: "m", email: "m@x.in", role: "member", expires_at: at(1) },
+      { user_id: "gone", email: "g@x.in", role: "member", expires_at: at(-1) },
+      { user_id: "v", email: "v@x.in", role: "viewer" },
+    ],
+  };
+  it("ends when the end date passes", () => {
+    expect(isCurrent({}, now)).toBe(true);
+    expect(isCurrent({ expires_at: at(1) }, now)).toBe(true);
+    expect(isCurrent({ expires_at: at(-1) }, now)).toBe(false);
+  });
+  it("lets current owners and members add, not viewers, ended members or outsiders", () => {
+    expect(["o", "m", "gone", "v", "nobody"].map((id) => canAdd(circle, id, now))).toEqual([true, true, false, false, false]);
   });
 });

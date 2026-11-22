@@ -67,6 +67,20 @@ export default function AppointmentDetails({
       ? "No reminder"
       : REMINDER_CHOICES.find((c) => c.value === appt.reminder_minutes)?.label ?? `${appt.reminder_minutes} minutes before`;
 
+  // Listed as going by the creator: my own row, where my reply lives.
+  const myPart = appt.participants?.find((x) => x.user_id === ctx.userId);
+  async function reply(answer: "going" | "cant" | null) {
+    if (busy) return;
+    setBusy(true);
+    const { error } = await supabase.rpc("reply_to_appointment", { p_appt: appt.id, p_reply: answer });
+    setBusy(false);
+    if (error) return setError(`Couldn’t save your reply: ${error.message}`);
+    await refresh();
+    setError(null);
+    toast("ok", answer === "going" ? "You’re going" : answer === "cant" ? "Marked as can’t go; your reminder is off" : "Reply cleared");
+  }
+  const REPLY_NOTE = { going: " (going)", cant: " (can’t)" } as const;
+
   async function cancel(scope: "one" | "series") {
     if (busy) return;
     setBusy(true);
@@ -92,6 +106,23 @@ export default function AppointmentDetails({
     }
     await refresh();
     toast("ok", "Appointment restored");
+  }
+
+  // Someone else's busy-only appointment: the hours are all there is.
+  if (appt.busy) {
+    return (
+      <div className="details">
+        <div className="details-head act-slate status-confirmed">
+          <h3>Busy</h3>
+          <p className="details-when">
+            {start.toFormat("cccc, d LLLL yyyy")}
+            <br />
+            {fmtRange(appt.starts_at, appt.ends_at, tz)}
+          </p>
+        </div>
+        <p className="hint">{by ?? "A member"} of {sharedIn?.name ?? "your circle"} is busy then. They shared the time only.</p>
+      </div>
+    );
   }
 
   return (
@@ -160,7 +191,13 @@ export default function AppointmentDetails({
           <>
             <dt><Icon d="M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2.5 20a6.5 6.5 0 0 1 13 0M16.5 11a3 3 0 1 0 0-6M17.5 14.6a5.5 5.5 0 0 1 4 5.4" /><span className="sr-only">Going</span></dt>
             <dd>
-              <span>Going: {[appt.user_id, ...appt.participants!.map((p) => p.user_id)].map((id) => (id === ctx.userId ? "you" : sharedIn.circle_members.find((m) => m.user_id === id)?.email.split("@")[0] ?? "a member")).join(", ")}</span>
+              <span>Going: {[{ user_id: appt.user_id, reply: null }, ...appt.participants!].map((x) => (x.user_id === ctx.userId ? "you" : sharedIn.circle_members.find((m) => m.user_id === x.user_id)?.email.split("@")[0] ?? "a member") + (x.reply ? REPLY_NOTE[x.reply] : "")).join(", ")}</span>
+              {ctx.replies && myPart && appt.status !== "cancelled" && (
+                <span className="chips chips-xs" role="group" aria-label="Are you going?">
+                  <button type="button" className={`chip ${myPart.reply === "going" ? "is-selected" : ""}`} aria-pressed={myPart.reply === "going"} disabled={busy} onClick={() => reply(myPart.reply === "going" ? null : "going")}>Going</button>
+                  <button type="button" className={`chip ${myPart.reply === "cant" ? "is-selected" : ""}`} aria-pressed={myPart.reply === "cant"} disabled={busy} onClick={() => reply(myPart.reply === "cant" ? null : "cant")}>Can’t</button>
+                </span>
+              )}
             </dd>
           </>
         )}
@@ -189,7 +226,7 @@ export default function AppointmentDetails({
       </dl>
 
       {/* Who can see it, and whose it is. */}
-      {sharedIn && <p className="hint">Shared with {sharedIn.name}{mine ? ". Everyone in it can see this." : `, added by ${by ?? "another member"}. Only they can change it.`}</p>}
+      {sharedIn && <p className="hint">Shared with {sharedIn.name}{mine ? (appt.busy_only ? " as busy only: they see the time, and nothing else about it." : ". Everyone in it can see this.") : `, added by ${by ?? "another member"}. Only they can change it.`}</p>}
       {!mine && appt.outcome && <p className="hint">Marked {appt.outcome === "done" ? "done" : "not done"}{appt.outcome_reason ? `: ${appt.outcome_reason}` : ""}.</p>}
 
       {error && <div className="alert alert-error" role="alert">{error}</div>}

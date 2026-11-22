@@ -20,7 +20,7 @@ import { useDismiss } from "./useDismiss";
 import CirclesView from "./CirclesView";
 import ActivityView from "./ActivityView";
 import { useCircles } from "./useCircles";
-import { isOpen, seatsOf } from "@/lib/circles";
+import { canAdd, isOpen, seatsOf } from "@/lib/circles";
 import { registerServiceWorker } from "@/lib/push-client";
 
 export type View = "week" | "agenda" | "tasks" | "types" | "places" | "settings" | "circles" | "activity";
@@ -73,6 +73,9 @@ export default function Planner() {
   const [face, setFace] = useState<string | null>(null); // in a circle: show only this member's items
   const circle = circles.circles.find((c) => c.id === scope);
   const seats = useMemo(() => (circle ? seatsOf(circle) : []), [circle]);
+  // The circles I may share with: not those where I am a viewer. An item already shared keeps its circle on offer.
+  const shareable = (keep?: string | null) => circles.circles.filter((c) => canAdd(c, ctx.userId) || c.id === keep);
+  const startIn = circle && canAdd(circle, ctx.userId) ? circle.id : undefined;
   // "Mine" is what I created, what I am going to, and what is assigned to me.
   const isMine = (x: { user_id: string; participants?: { user_id: string }[]; assignee_id?: string | null }) =>
     x.user_id === ctx.userId || !!x.participants?.some((p) => p.user_id === ctx.userId) || x.assignee_id === ctx.userId;
@@ -170,18 +173,18 @@ export default function Planner() {
   let panelTitle = "";
   if (panel?.kind === "new-appt") {
     panelTitle = "New appointment";
-    panelBody = <AppointmentForm ctx={ctx} circles={circles.circles} initial={{ ...panel, circleId: circle?.id }} onDone={showSaved} onCancel={closePanel} />;
+    panelBody = <AppointmentForm ctx={ctx} circles={shareable()} initial={{ ...panel, circleId: startIn }} onDone={showSaved} onCancel={closePanel} />;
   } else if (panel?.kind === "edit-appt") {
     const a = appointments.find((x) => x.id === panel.id);
     panelTitle = "Edit appointment";
-    panelBody = a ? <AppointmentForm ctx={ctx} circles={circles.circles} existing={a} onDone={showSaved} onCancel={() => setPanel({ kind: "appt", id: a.id })} /> : null;
+    panelBody = a ? <AppointmentForm ctx={ctx} circles={shareable(a.circle_id)} existing={a} onDone={showSaved} onCancel={() => setPanel({ kind: "appt", id: a.id })} /> : null;
   } else if (panel?.kind === "appt") {
     const a = appointments.find((x) => x.id === panel.id);
     panelTitle = "Appointment";
     panelBody = a ? <AppointmentDetails key={a.id} ctx={ctx} circles={circles.circles} appt={a} onEdit={() => setPanel({ kind: "edit-appt", id: a.id })} onClose={closePanel} /> : <p className="muted">This appointment is no longer in view.</p>;
   } else if (panel?.kind === "new-task") {
     panelTitle = "New task";
-    panelBody = <TaskForm ctx={ctx} circles={circles.circles} circleId={circle?.id} date={panel.date} onDone={closePanel} />;
+    panelBody = <TaskForm ctx={ctx} circles={shareable()} circleId={startIn} date={panel.date} onDone={closePanel} />;
   } else if (panel?.kind === "edit-task") {
     const t = tasks.find((x) => x.id === panel.id);
     panelTitle = "Task";
@@ -189,7 +192,7 @@ export default function Planner() {
     const from = theirs ? circles.circles.find((c) => c.id === t.circle_id) : undefined;
     const emailOf = (id?: string | null) => from?.circle_members.find((m) => m.user_id === id)?.email;
     // The person it is for, or anyone when it is unassigned, may finish it.
-    const canFinish = !!t && ctx.people && t.state === "pending" && (!t.assignee_id || t.assignee_id === ctx.userId);
+    const canFinish = !!t && ctx.people && t.state === "pending" && (!t.assignee_id || t.assignee_id === ctx.userId) && !!from && canAdd(from, ctx.userId);
     // Someone else's shared task: read-only here, apart from marking it done when it is yours to do.
     panelBody = !t ? null : theirs ? (
       <div className="stack">
@@ -201,9 +204,9 @@ export default function Planner() {
         {ctx.people && <p>{t.assignee_id ? (t.assignee_id === ctx.userId ? "This one is for you." : `For ${emailOf(t.assignee_id) ?? "another member"}.`) : "For anyone in the circle."}</p>}
         {t.notes && <div className="note-block">{t.notes}</div>}
         {canFinish && <div><button className="btn btn-primary" onClick={async () => { await ctx.completeTask(t); closePanel(); }}>Mark done</button></div>}
-        <p className="hint">Shared in {from?.name ?? "a circle"} by {emailOf(t.user_id) ?? "another member"}. Only they can edit it.</p>
+        <p className="hint">Shared in {from?.name ?? "a circle"} by {emailOf(t.user_id) ?? "another member"}. Only they can edit it.{from && !canAdd(from, ctx.userId) ? " You are a viewer here, so you cannot mark it done." : ""}</p>
       </div>
-    ) : <TaskForm ctx={ctx} circles={circles.circles} existing={t} onDone={closePanel} />;
+    ) : <TaskForm ctx={ctx} circles={shareable(t.circle_id)} existing={t} onDone={closePanel} />;
   }
 
   if (loading || !view) {

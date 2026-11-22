@@ -29,6 +29,10 @@ export interface Appointment {
   id: string;
   user_id: string; // who created it; only they can change it
   circle_id?: string | null; // shared with this circle; absent until 0006_sharing.sql has been run
+  // Shared as a block of time only: the circle sees when, and nothing else. Absent until 0009_roles.sql has been run.
+  busy_only?: boolean;
+  // Someone else's busy-only appointment: just its hours. Built in usePlanner, never a full database row.
+  busy?: boolean;
   activity_type_id: string | null; // null when the appointment uses a one-off custom_activity
   place_id: string | null;
   series_id: string | null;
@@ -46,7 +50,7 @@ export interface Appointment {
   custom_activity?: string | null;
   custom_place?: string | null;
   // The other members going, besides the creator. Absent until supabase/migrations/0008_people.sql has been run.
-  participants?: { user_id: string }[];
+  participants?: { user_id: string; reply?: "going" | "cant" | null }[];
 }
 
 export interface Task {

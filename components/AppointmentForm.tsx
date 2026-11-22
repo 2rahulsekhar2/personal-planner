@@ -8,7 +8,7 @@ import { ACTIVITY_COLORS, REMINDER_CHOICES } from "@/lib/types";
 import { ColorPicker } from "./ActivityTypesView";
 import Select from "./Select";
 import { findConflicts, isOverlapError } from "@/lib/conflicts";
-import { seatsOf, type Circle } from "@/lib/circles";
+import { isCurrent, seatsOf, type Circle } from "@/lib/circles";
 import { fmtRange, todayISO, toInterval } from "@/lib/time";
 import { expandWeekly, WEEKDAY_LABELS, MAX_OCCURRENCES } from "@/lib/recurrence";
 import { isGoogleMapsUrl } from "@/lib/maps";
@@ -50,7 +50,9 @@ export default function AppointmentForm({
   const [circleId, setCircleId] = useState(existing ? existing.circle_id ?? "" : initial?.circleId ?? "");
   // The other members going. The creator always is, and is not in this list.
   const [going, setGoing] = useState<string[]>(existing?.participants?.map((p) => p.user_id) ?? []);
-  const others = seatsOf(circles.find((c) => c.id === circleId) ?? { id: "", name: "", owner_id: "", circle_members: [] }).filter((m) => m.user_id !== ctx.userId);
+  const others = seatsOf(circles.find((c) => c.id === circleId) ?? { id: "", name: "", owner_id: "", circle_members: [] }).filter((m) => m.user_id !== ctx.userId && isCurrent(m));
+  // Shared as a block of time only: the circle sees when, not what.
+  const [busyOnly, setBusyOnly] = useState(existing?.busy_only ?? false);
   const share = (id: string) => { setCircleId(id); setGoing([]); }; // a different circle has different people
   // When the people going are already busy in this slot. Times only: a private item never shows what it is.
   const [busy, setBusy] = useState<{ user_id: string; starts_at: string; ends_at: string }[]>([]);
@@ -123,7 +125,7 @@ export default function AppointmentForm({
   // After the appointment itself is saved: record who is going, on one appointment or a run of a series.
   async function saveGoing(target: { p_appt?: string; p_series?: string; p_from?: string }) {
     if (!ctx.people) return;
-    const { error } = await supabase.rpc("set_participants", { p_appt: target.p_appt ?? null, p_series: target.p_series ?? null, p_from: target.p_from ?? null, p_users: circleId ? going : [] });
+    const { error } = await supabase.rpc("set_participants", { p_appt: target.p_appt ?? null, p_series: target.p_series ?? null, p_from: target.p_from ?? null, p_users: circleId && !busyOnly ? going : [] });
     if (error) toast("error", `Saved, but couldn’t set who is going: ${error.message}`);
   }
 
@@ -176,6 +178,7 @@ export default function AppointmentForm({
       custom_place: placeId ? null : customPlace?.trim() || null,
       // Sent only when the database has the sharing columns.
       ...(ctx.sharing ? { circle_id: circleId || null } : {}),
+      ...(ctx.replies ? { busy_only: !!circleId && busyOnly } : {}),
       title: finalTitle,
       status,
       team: team.trim() || null,
@@ -494,11 +497,22 @@ export default function AppointmentForm({
               <button type="button" key={c.id} className={`chip ${circleId === c.id ? "is-selected" : ""}`} aria-pressed={circleId === c.id} onClick={() => share(c.id)}>{c.name}</button>
             ))}
           </div>
-          {circleId && <span className="hint">Everyone in {circles.find((c) => c.id === circleId)?.name} can see this. Only you can change it.</span>}
+          {circleId && ctx.replies && (
+            <div className="row seat-role">
+              <span className="muted">They see</span>
+              <span className="chips chips-xs" role="group" aria-label="What the circle sees">
+                <button type="button" className={`chip ${!busyOnly ? "is-selected" : ""}`} aria-pressed={!busyOnly} onClick={() => setBusyOnly(false)}>Everything</button>
+                <button type="button" className={`chip ${busyOnly ? "is-selected" : ""}`} aria-pressed={busyOnly} onClick={() => setBusyOnly(true)}>Busy only</button>
+              </span>
+            </div>
+          )}
+          {circleId && <span className="hint">{busyOnly && ctx.replies
+            ? `Everyone in ${circles.find((c) => c.id === circleId)?.name} sees that you are busy at this time, and nothing else about it.`
+            : `Everyone in ${circles.find((c) => c.id === circleId)?.name} can see this. Only you can change it.`}</span>}
         </fieldset>
       )}
 
-      {ctx.people && circleId && others.length > 0 && (
+      {ctx.people && circleId && others.length > 0 && !(busyOnly && ctx.replies) && (
         <fieldset className="field">
           <legend>Who is going</legend>
           <div className="chips chips-xs" style={{ marginTop: 0 }}>

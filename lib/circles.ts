@@ -4,7 +4,15 @@ export interface CircleMember {
   user_id: string;
   email: string;
   role: CircleRole;
+  expires_at?: string | null; // access ends then; absent until 0009_roles.sql has been run
 }
+
+/** Still in the circle: no end date, or one that has not passed. */
+export const isCurrent = (m: Pick<CircleMember, "expires_at">, now = Date.now()) => !m.expires_at || Date.parse(m.expires_at) > now;
+
+/** May add to the circle and be given tasks: a current owner or member, not a viewer. */
+export const canAdd = (c: Circle, userId: string | null | undefined, now = Date.now()) =>
+  c.circle_members.some((m) => m.user_id === userId && m.role !== "viewer" && isCurrent(m, now));
 
 export interface Circle {
   id: string;
@@ -21,6 +29,7 @@ export interface CircleInvite {
   inviter_email: string;
   email: string | null; // null: a link invite
   role: "member" | "viewer";
+  access_days?: number | null; // how long the access lasts once accepted; null: no end
   expires_at: string;
   accepted_at: string | null;
   declined_at: string | null;
