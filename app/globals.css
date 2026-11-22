@@ -430,6 +430,34 @@ input[aria-invalid="true"] { border-color: var(--danger); }
 textarea { resize: vertical; }
 .input-inline { width: auto !important; min-height: 36px !important; }
 .days-input { width: 76px !important; }
+.reminder { display: flex; flex-direction: column; }
+/* Brought into view when it opens (useReveal): stop clear of the panel's sticky Save bar. */
+.reveal { scroll-margin: 12px 0 96px; }
+/* Status: two choices, each with a sample block drawn the way the calendar will draw the appointment. */
+.status-pick { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+.status-opt { display: flex; align-items: center; gap: 10px; padding: 8px 10px; border: 1px solid var(--line-2); border-radius: 14px; background: none; color: inherit; text-align: left; cursor: pointer; }
+.status-opt:hover { background: var(--surface-2); }
+.status-opt.is-selected { border-color: var(--accent); background: var(--accent-soft); }
+.status-opt .add-hint { font-size: 12px; }
+.status-sample { width: 26px; height: 26px; flex-shrink: 0; border-radius: 8px; background: var(--accent); }
+.status-opt.is-tentative .status-sample { background: transparent; border: 1.5px dashed var(--accent); }
+@media (max-width: 420px) { .status-pick { grid-template-columns: 1fr; } }
+/* Repeat: each line reads as a clause (Every 2 weeks / on Mon, Wed / Ends after 10 times), then the rule is said back whole. */
+.repeat { display: flex; flex-direction: column; gap: 10px; }
+/* The settings of a chosen chip: a box hung under the row of chips, with a pointer up at the chip it belongs to. */
+.subfields { position: relative; margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface-2); }
+.subfields::before {
+  content: ""; position: absolute; top: -6px; left: clamp(14px, calc(var(--notch, 28px) - 5px), calc(100% - 24px)); width: 10px; height: 10px;
+  background: var(--surface-2); border-left: 1px solid var(--line); border-top: 1px solid var(--line); transform: rotate(45deg);
+}
+.subfields input { background: var(--surface); }
+.subfields .repeat-summary { margin: 2px -12px -12px; border-radius: 0 0 13px 13px; }
+.repeat-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.repeat-summary { display: flex; flex-direction: column; gap: 2px; margin: 2px 0 0; padding: 10px 12px; border-radius: 14px; background: var(--accent-soft); font-size: 13px; }
+.repeat-summary strong { color: var(--accent-text); font-size: 14px; }
+.repeat-summary span { color: var(--ink-2); }
+.repeat-summary.is-empty { background: var(--surface-2); }
+.repeat-summary.is-empty strong { color: var(--ink-2); }
 .check { display: inline-flex; align-items: flex-start; gap: 8px; cursor: pointer; }
 .check input { width: 18px; height: 18px; margin-top: 2px; accent-color: var(--accent); }
 .subform { border: 1px dashed var(--line-2); border-radius: 10px; padding: 12px; margin-top: 8px; display: flex; flex-direction: column; gap: 10px; }

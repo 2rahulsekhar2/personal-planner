@@ -116,6 +116,7 @@ export default function WeekView({
   const closeSlot = useCallback(() => setSlot(null), []);
   const pad = (n: number) => String(n).padStart(2, "0");
   const [HOUR_PX, setHourPx] = useState(24);
+  const hasScopeBar = !!scopeBar; // the scope bar adds a row above the grid
   useLayoutEffect(() => {
     const fit = () => {
       const col = gridRef.current?.querySelector(".week-col");
@@ -128,7 +129,7 @@ export default function WeekView({
     fit();
     window.addEventListener("resize", fit);
     return () => window.removeEventListener("resize", fit);
-  }, [!!scopeBar]); // the scope bar adds a row above the grid
+  }, [hasScopeBar]);
   const nowTop = ((nowL.hour * 60 + nowL.minute - startHour * 60) / 60) * HOUR_PX;
 
 

@@ -86,12 +86,26 @@ export const ACTIVITY_COLORS: { key: string; label: string }[] = [
   { key: "clay", label: "Clay" },
 ];
 
-export const REMINDER_CHOICES: { value: number | null; label: string }[] = [
-  { value: null, label: "No reminder" },
-  { value: 0, label: "At start time" },
-  { value: 10, label: "10 minutes before" },
-  { value: 30, label: "30 minutes before" },
-  { value: 60, label: "1 hour before" },
-  { value: 120, label: "2 hours before" },
-  { value: 1440, label: "1 day before" },
-];
+// A reminder is stored as minutes before the start; null means none. The database allows up to 7 days.
+export const MAX_REMINDER_MINUTES = 10080;
+export type ReminderUnit = "minutes" | "hours" | "days";
+// Each unit: its size in minutes, its names, and the amount offered when it is first picked.
+export const REMINDER_UNITS: Record<ReminderUnit, { minutes: number; label: string; one: string; start: number }> = {
+  minutes: { minutes: 1, label: "Minutes", one: "minute", start: 15 },
+  hours: { minutes: 60, label: "Hours", one: "hour", start: 1 },
+  days: { minutes: 1440, label: "Days", one: "day", start: 1 },
+};
+
+/** Minutes as the largest unit that divides them exactly: 90 is 90 minutes, 120 is 2 hours, 2880 is 2 days. Null for none or "at start". */
+export function reminderParts(minutes: number | null): { amount: number; unit: ReminderUnit } | null {
+  if (!minutes || minutes < 0) return null;
+  const unit: ReminderUnit = minutes % 1440 === 0 ? "days" : minutes % 60 === 0 ? "hours" : "minutes";
+  return { amount: minutes / REMINDER_UNITS[unit].minutes, unit };
+}
+
+/** "No reminder", "At start time", "15 minutes before", "1 hour before", "2 days before". */
+export function reminderLabel(minutes: number | null): string {
+  if (minutes === null) return "No reminder";
+  const p = reminderParts(minutes);
+  return p ? `${p.amount} ${p.amount === 1 ? REMINDER_UNITS[p.unit].one : p.unit} before` : "At start time";
+}

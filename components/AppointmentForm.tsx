@@ -4,13 +4,19 @@ import { DateTime } from "luxon";
 import type { PlannerCtx } from "./usePlanner";
 import { APPT_FIELDS } from "./usePlanner";
 import type { Appointment, AppointmentStatus } from "@/lib/types";
-import { ACTIVITY_COLORS, REMINDER_CHOICES } from "@/lib/types";
+import { ACTIVITY_COLORS, reminderLabel } from "@/lib/types";
+import ReminderPicker from "./ReminderPicker";
+import { useReveal } from "./useReveal";
+import { notchOf } from "./ReminderPicker";
 import { ColorPicker } from "./ActivityTypesView";
-import Select from "./Select";
 import { findConflicts, isOverlapError } from "@/lib/conflicts";
 import { isCurrent, seatsOf, type Circle } from "@/lib/circles";
 import { fmtRange, todayISO, toInterval } from "@/lib/time";
-import { expandWeekly, WEEKDAY_LABELS, MAX_OCCURRENCES } from "@/lib/recurrence";
+import { describeRule, expandRule, monthByChoices, WEEKDAY_LABELS, MAX_OCCURRENCES, type Freq, type MonthBy, type RepeatRule } from "@/lib/recurrence";
+
+const UNIT = { daily: "day", weekly: "week", monthly: "month", yearly: "year" } as const;
+// How far a new repeat runs until the person says otherwise.
+const DEFAULT_RUN = { daily: { weeks: 2 }, weekly: { weeks: 8 }, monthly: { months: 6 }, yearly: { years: 5 } } as const;
 import { isGoogleMapsUrl } from "@/lib/maps";
 
 interface OccReview {
@@ -64,12 +70,20 @@ export default function AppointmentForm({
   const [titleEdited, setTitleEdited] = useState(!!existing);
   const [status, setStatus] = useState<AppointmentStatus>(existing?.status === "tentative" ? "tentative" : "confirmed");
   const [reminder, setReminder] = useState<number | null>(existing ? existing.reminder_minutes : profile?.default_reminder_minutes ?? 60);
-  const [team, setTeam] = useState(existing?.team ?? "");
+  const [team] = useState(existing?.team ?? ""); // no longer editable; an older appointment keeps what it has
   const [notes, setNotes] = useState(existing?.notes ?? "");
   const [more, setMore] = useState(false);
-  const [repeat, setRepeat] = useState(false);
+  // Repeat: how often ("" is never), every how many, on which days, and how it ends.
+  const [freq, setFreq] = useState<Freq | "">("");
+  const repeat = !!freq;
+  const [every, setEvery] = useState(1);
   const [weekdays, setWeekdays] = useState<number[]>([]);
+  const [monthBy, setMonthBy] = useState<MonthBy>("date");
+  const [ends, setEnds] = useState<"on" | "after">("on");
   const [until, setUntil] = useState("");
+  const [notch, setNotch] = useState(0); // where the chosen chip sits, so its settings box can point back at it
+  const [untilSet, setUntilSet] = useState(false); // the person chose the end date; do not move it for them
+  const [count, setCount] = useState(10);
   const [scope, setScope] = useState<"one" | "series">("one");
 
   const [saving, setSaving] = useState(false);
@@ -99,16 +113,33 @@ export default function AppointmentForm({
     setWarnings([]);
     setReview(null);
     setError(null);
-  }, [typeId, date, start, end, status, repeat, weekdays, until, scope]);
+  }, [typeId, date, start, end, status, freq, every, weekdays, monthBy, ends, until, count, scope]);
 
-  useEffect(() => {
-    if (repeat && weekdays.length === 0) {
-      setWeekdays([DateTime.fromISO(date, { zone: tz }).weekday]);
-    }
-    if (repeat && !until) {
-      setUntil(DateTime.fromISO(date, { zone: tz }).plus({ weeks: 8 }).toISODate()!);
-    }
-  }, [repeat]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Choosing how often fills in sensible starting values: the start date's weekday, and an end a fitting distance away.
+  function pickFreq(f: Freq | "") {
+    setFreq(f);
+    if (!f) return;
+    const d = DateTime.fromISO(date, { zone: tz });
+    if (!d.isValid) return;
+    if (f === "weekly" && weekdays.length === 0) setWeekdays([d.weekday]);
+    if (!untilSet) setUntil(d.plus(DEFAULT_RUN[f]).toISODate()!);
+  }
+  // Opening More options, or choosing how often, opens fields below the fold: bring them into view.
+  const moreRef = useReveal<HTMLDivElement>(more);
+  const repeatRef = useReveal<HTMLFieldSetElement>(`${freq}${ends}`);
+  // The day-of-month choices depend on the date; fall back to "on the date" when the chosen one no longer applies.
+  const monthChoices = monthByChoices(date);
+  const by = monthChoices.some((c) => c.by === monthBy) ? monthBy : "date";
+  const rule: RepeatRule = {
+    freq: freq || "weekly", every, weekdays, monthBy: by, startDate: date, startTime: start, endTime: end, timeZone: tz,
+    ...(ends === "on" ? { endDate: until } : { count }),
+  };
+  const ruleKey = JSON.stringify(rule);
+  // What the rule comes to, shown under it while choosing.
+  const preview = useMemo(() => {
+    if (!freq || !date || !start || !end) return [];
+    try { return expandRule(rule); } catch { return []; }
+  }, [ruleKey, freq]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const interval = useMemo(() => toInterval(date, start, end, tz), [date, start, end, tz]);
 
@@ -163,9 +194,9 @@ export default function AppointmentForm({
     if (!interval.valid) return "That date or time isn’t valid.";
     if (start === end) return "The end time must be after the start time.";
     if (repeat) {
-      if (!weekdays.length) return "Pick at least one weekday to repeat on.";
-      if (!until) return "Choose when the repeat ends.";
-      if (until < date) return "The repeat end date must be on or after the first date.";
+      if (freq === "weekly" && !weekdays.length) return "Pick at least one weekday to repeat on.";
+      if (ends === "on" && !until) return "Choose when the repeat ends.";
+      if (ends === "on" && until < date) return "The repeat end date must be on or after the first date.";
     }
     return null;
   }
@@ -240,9 +271,9 @@ export default function AppointmentForm({
   }
 
   async function reviewSeries(): Promise<OccReview[] | null> {
-    const occ = expandWeekly({ startDate: date, endDate: until, weekdays, startTime: start, endTime: end, timeZone: tz });
+    const occ = expandRule(rule);
     if (!occ.length) {
-      setError("No dates match those weekdays before the end date.");
+      setError("No date matches that repeat before it ends.");
       return null;
     }
     const overlapping = await fetchOverlapping(occ[0].starts_at, occ[occ.length - 1].ends_at);
@@ -259,11 +290,13 @@ export default function AppointmentForm({
       return;
     }
     const { data, error } = await supabase.rpc("create_appointment_series", {
-      series: { weekdays, start_date: date, end_date: until, start_time: start, end_time: end, time_zone: tz },
+      series: { weekdays: freq === "weekly" ? weekdays : [], start_date: date, end_date: rev[rev.length - 1].date, start_time: start, end_time: end, time_zone: tz },
       template: fields(),
       occurrences: keep.map((k) => ({ starts_at: k.starts_at, ends_at: k.ends_at })),
     });
     if (error) return handleDbError(error);
+    // Keep the rule with the series. Without 0013_repeat_rule.sql the column is missing and this is skipped; the appointments are saved either way.
+    await supabase.from("appointment_series").update({ rule: { freq, every, weekdays: freq === "weekly" ? weekdays : [], monthBy: by, ...(ends === "on" ? { until } : { count }) } }).eq("id", data as string);
     await saveGoing({ p_series: data as string });
     await refresh();
     const skipped = rev.length - keep.length;
@@ -537,49 +570,86 @@ export default function AppointmentForm({
 
       <button type="button" className="disclosure" aria-expanded={more} onClick={() => setMore(!more)}>
         {more ? "▾" : "▸"} More options
-        {!more && <span className="muted"> · {status === "tentative" ? "Tentative" : "Confirmed"}, {REMINDER_CHOICES.find((c) => c.value === reminder)?.label.toLowerCase() ?? `${reminder} min before`}{repeat ? ", repeats" : ""}</span>}
+        {!more && <span className="muted"> · {status === "tentative" ? "Tentative" : "Confirmed"}, {reminderLabel(reminder).toLowerCase()}{repeat ? ", repeats" : ""}</span>}
       </button>
 
       {more && (
-        <div className="stack">
+        <div className="stack reveal" ref={moreRef}>
+          {/* Each choice carries a sample of how the appointment will be drawn on the calendar: solid, or dashed. */}
           <fieldset className="field">
             <legend>Status</legend>
-            <div className="segmented">
-              <button type="button" className={status === "confirmed" ? "is-active" : ""} aria-pressed={status === "confirmed"} onClick={() => setStatus("confirmed")}>Confirmed</button>
-              <button type="button" className={status === "tentative" ? "is-active" : ""} aria-pressed={status === "tentative"} onClick={() => setStatus("tentative")}>Tentative</button>
+            <div className="status-pick">
+              {([["confirmed", "Confirmed", "Drawn solid on the calendar"], ["tentative", "Tentative", "Drawn dashed until you confirm"]] as const).map(([s, label, hint]) => (
+                <button type="button" key={s} className={`status-opt is-${s} ${status === s ? "is-selected" : ""}`} aria-pressed={status === s} onClick={() => setStatus(s)}>
+                  <span className="status-sample" aria-hidden />
+                  <span><span className="add-label">{label}</span><span className="add-hint">{hint}</span></span>
+                </button>
+              ))}
             </div>
           </fieldset>
-          <label className="field">
-            <span>Reminder</span>
-            <Select
-              id="appt-reminder"
-              value={reminder === null ? "none" : String(reminder)}
-              options={[
-                ...REMINDER_CHOICES.map((c) => ({ value: c.value === null ? "none" : String(c.value), label: c.label })),
-                // A reminder set to some other number of minutes keeps its own entry.
-                ...(reminder !== null && !REMINDER_CHOICES.some((c) => c.value === reminder) ? [{ value: String(reminder), label: `${reminder} minutes before` }] : []),
-              ]}
-              onChange={(v) => setReminder(v === "none" ? null : Number(v))}
-            />
-          </label>
-          <label className="field"><span>Team <span className="muted">(optional)</span></span><input value={team} onChange={(e) => setTeam(e.target.value)} placeholder="Sunday XI" /></label>
+          <fieldset className="field">
+            <legend>Reminder</legend>
+            <ReminderPicker value={reminder} onChange={setReminder} />
+          </fieldset>
 
           {!existing && (
-            <fieldset className="field">
+            <fieldset className="field reveal" ref={repeatRef}>
               <legend>Repeat</legend>
-              <label className="check"><input type="checkbox" checked={repeat} onChange={(e) => setRepeat(e.target.checked)} /> Repeat every week</label>
-              {repeat && (
-                <div className="stack">
-                  <div className="chips" role="group" aria-label="Weekdays">
-                    {WEEKDAY_LABELS.map((w) => (
-                      <button type="button" key={w.n} className={`chip chip-sm ${weekdays.includes(w.n) ? "is-selected" : ""}`} aria-pressed={weekdays.includes(w.n)} aria-label={w.long}
-                        onClick={() => setWeekdays(weekdays.includes(w.n) ? weekdays.filter((x) => x !== w.n) : [...weekdays, w.n].sort())}>
-                        {w.short}
-                      </button>
-                    ))}
+              <div className="chips chips-xs" role="group" aria-label="How often" style={{ marginTop: 0 }}>
+                {([["", "Never"], ["daily", "Daily"], ["weekly", "Weekly"], ["monthly", "Monthly"], ["yearly", "Yearly"]] as const).map(([f, label]) => (
+                  <button type="button" key={f} className={`chip ${freq === f ? "is-selected" : ""}`} aria-pressed={freq === f} onClick={(e) => { setNotch(notchOf(e.currentTarget)); pickFreq(f); }}>{label}</button>
+                ))}
+              </div>
+              {freq && (
+                <div className="repeat subfields" style={{ ["--notch" as string]: `${notch}px` }}>
+                  <div className="repeat-row">
+                    <span className="muted">Every</span>
+                    <input type="number" className="input-inline days-input" min={1} max={99} aria-label={`Every how many ${UNIT[freq]}s`} value={every} onChange={(e) => setEvery(Math.max(1, Math.min(99, Math.floor(Number(e.target.value)) || 1)))} />
+                    <span className="muted">{UNIT[freq]}{every > 1 ? "s" : ""}</span>
                   </div>
-                  <label className="field"><span>Until</span><input type="date" value={until} min={date} onChange={(e) => setUntil(e.target.value)} /></label>
-                  <p className="hint">Up to {MAX_OCCURRENCES} occurrences.</p>
+
+                  {freq === "weekly" && (
+                    <div className="repeat-row">
+                      <span className="chips chips-xs" role="group" aria-label="Weekdays" style={{ marginTop: 0 }}>
+                        {WEEKDAY_LABELS.map((w) => (
+                          <button type="button" key={w.n} className={`chip ${weekdays.includes(w.n) ? "is-selected" : ""}`} aria-pressed={weekdays.includes(w.n)} aria-label={w.long}
+                            onClick={() => setWeekdays(weekdays.includes(w.n) ? weekdays.filter((x) => x !== w.n) : [...weekdays, w.n].sort())}>
+                            {w.short}
+                          </button>
+                        ))}
+                      </span>
+                      <button type="button" className="link" onClick={() => setWeekdays([1, 2, 3, 4, 5])}>Mon to Fri</button>
+                    </div>
+                  )}
+
+                  {(freq === "monthly" || freq === "yearly") && monthChoices.length > 1 && (
+                    <div className="chips chips-xs" role="group" aria-label="Which day" style={{ marginTop: 0 }}>
+                      {monthChoices.map((c) => (
+                        <button type="button" key={c.by} className={`chip ${by === c.by ? "is-selected" : ""}`} aria-pressed={by === c.by} onClick={() => setMonthBy(c.by)}>
+                          {c.label}{freq === "yearly" && c.by !== "date" ? ` of ${DateTime.fromISO(date).monthLong}` : ""}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+
+                  <div className="repeat-row">
+                    <span className="muted">Ends</span>
+                    <span className="chips chips-xs" role="group" aria-label="How it ends" style={{ marginTop: 0 }}>
+                      <button type="button" className={`chip ${ends === "on" ? "is-selected" : ""}`} aria-pressed={ends === "on"} onClick={() => setEnds("on")}>On a date</button>
+                      <button type="button" className={`chip ${ends === "after" ? "is-selected" : ""}`} aria-pressed={ends === "after"} onClick={() => setEnds("after")}>After</button>
+                    </span>
+                    {ends === "on"
+                      ? <input type="date" className="input-inline" aria-label="Last date" value={until} min={date} onChange={(e) => { setUntil(e.target.value); setUntilSet(true); }} />
+                      : <><input type="number" className="input-inline days-input" min={1} max={MAX_OCCURRENCES} aria-label="How many times" value={count} onChange={(e) => setCount(Math.max(1, Math.min(MAX_OCCURRENCES, Math.floor(Number(e.target.value)) || 1)))} /><span className="muted">times</span></>}
+                  </div>
+
+                  {/* The rule read back as a sentence, with what it comes to. */}
+                  <p className={`repeat-summary ${preview.length ? "" : "is-empty"}`} role="status">
+                    <strong>{describeRule(rule)}</strong>
+                    {preview.length > 0
+                      ? <span>{preview.length} appointment{preview.length > 1 ? "s" : ""}, the last on {DateTime.fromISO(preview[preview.length - 1].date).toFormat("ccc d LLL yyyy")}.{preview.length === MAX_OCCURRENCES ? ` That is the most one series can hold.` : ""}</span>
+                      : <span>No date matches yet. {freq === "weekly" && !weekdays.length ? "Pick at least one weekday." : "Check when it ends."}</span>}
+                  </p>
                 </div>
               )}
             </fieldset>
