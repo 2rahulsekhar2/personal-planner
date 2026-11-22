@@ -63,10 +63,11 @@ export function usePlanner() {
       supabase.from("profiles").select("user_id, time_zone, default_reminder_minutes, show_cancelled").maybeSingle(),
       supabase.from("activity_types").select("id, user_id, name, color, archived_at").order("name"),
       supabase.from("places").select("id, user_id, name, maps_url, notes, archived_at").order("name"),
-      loadTasks(`${TASK_FIELDS}, circle_id, assignee_id, completed_by`),
+      loadTasks(`${TASK_FIELDS}, circle_id, assignee_id, completed_by, series_id`),
     ]);
     // A later migration that has not been run makes the newest shape fail: step back one migration at a time.
     let tk = firstTasks;
+    if (tk.error) tk = await loadTasks(`${TASK_FIELDS}, circle_id, assignee_id, completed_by`);
     if (tk.error) tk = await loadTasks(`${TASK_FIELDS}, circle_id`);
     if (tk.error) tk = await loadTasks(TASK_FIELDS);
     const err = p.error || t.error || pl.error || tk.error;
