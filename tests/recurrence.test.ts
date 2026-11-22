@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { describeRule, expandRule, monthByChoices, type RepeatRule } from "@/lib/recurrence";
+import { choiceFromSeries, describeRule, expandRule, monthByChoices, storedRule, toRule, NO_REPEAT, type RepeatRule } from "@/lib/recurrence";
 import { toInterval, isTaskOverdue } from "@/lib/time";
 import { reminderLabel, reminderParts } from "@/lib/types";
 import { DateTime } from "luxon";
@@ -94,5 +94,22 @@ describe("reminder wording", () => {
     ]);
     expect(reminderParts(180)).toEqual({ amount: 3, unit: "hours" });
     expect(reminderParts(0)).toBeNull();
+  });
+});
+
+describe("repeat choices", () => {
+  it("round-trips through what is stored with a series", () => {
+    const choice = { ...NO_REPEAT, freq: "monthly" as const, every: 2, monthBy: "last" as const, ends: "after" as const, count: 6 };
+    const stored = storedRule(choice, "2026-11-24");
+    expect(stored).toEqual({ freq: "monthly", every: 2, weekdays: [], monthBy: "last", count: 6 });
+    // Loaded for editing, it ends on the series' last date instead of a count.
+    expect(choiceFromSeries({ rule: stored, weekdays: [], end_date: "2027-09-28" })).toEqual({ freq: "monthly", every: 2, weekdays: [], monthBy: "last", ends: "on", until: "2027-09-28", count: 10 });
+  });
+  it("reads a series from before rules were stored as weekly", () => {
+    expect(choiceFromSeries({ rule: null, weekdays: [1, 3], end_date: "2026-12-31" })).toMatchObject({ freq: "weekly", every: 1, weekdays: [1, 3], until: "2026-12-31" });
+  });
+  it("falls back to the date when the month choice no longer fits", () => {
+    // "The last Tuesday" was chosen on the 24th; on the 3rd there is no such choice.
+    expect(toRule({ ...NO_REPEAT, freq: "monthly", monthBy: "last", until: "2027-03-01" }, "2026-11-03", "09:00", "10:00", "UTC").monthBy).toBe("date");
   });
 });

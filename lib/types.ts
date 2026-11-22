@@ -59,6 +59,7 @@ export interface Task {
   circle_id?: string | null;
   assignee_id?: string | null; // on a shared task: the member it is for; null means anyone in the circle
   completed_by?: string | null;
+  series_id?: string | null; // shared by tasks made by one repeat; absent until 0014_series_edit.sql has been run
   title: string;
   due_date: string; // yyyy-MM-dd
   due_time: string | null; // HH:mm[:ss]

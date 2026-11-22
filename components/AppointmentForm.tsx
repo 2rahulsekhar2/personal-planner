@@ -7,16 +7,12 @@ import type { Appointment, AppointmentStatus } from "@/lib/types";
 import { ACTIVITY_COLORS, reminderLabel } from "@/lib/types";
 import ReminderPicker from "./ReminderPicker";
 import { useReveal } from "./useReveal";
-import { notchOf } from "./ReminderPicker";
 import { ColorPicker } from "./ActivityTypesView";
 import { findConflicts, isOverlapError } from "@/lib/conflicts";
 import { isCurrent, seatsOf, type Circle } from "@/lib/circles";
 import { fmtRange, todayISO, toInterval } from "@/lib/time";
-import { describeRule, expandRule, monthByChoices, WEEKDAY_LABELS, MAX_OCCURRENCES, type Freq, type MonthBy, type RepeatRule } from "@/lib/recurrence";
-
-const UNIT = { daily: "day", weekly: "week", monthly: "month", yearly: "year" } as const;
-// How far a new repeat runs until the person says otherwise.
-const DEFAULT_RUN = { daily: { weeks: 2 }, weekly: { weeks: 8 }, monthly: { months: 6 }, yearly: { years: 5 } } as const;
+import { choiceFromSeries, expandRule, storedRule, toRule, NO_REPEAT, type RepeatChoice } from "@/lib/recurrence";
+import RepeatPicker from "./RepeatPicker";
 import { isGoogleMapsUrl } from "@/lib/maps";
 
 interface OccReview {
@@ -73,17 +69,11 @@ export default function AppointmentForm({
   const [team] = useState(existing?.team ?? ""); // no longer editable; an older appointment keeps what it has
   const [notes, setNotes] = useState(existing?.notes ?? "");
   const [more, setMore] = useState(false);
-  // Repeat: how often ("" is never), every how many, on which days, and how it ends.
-  const [freq, setFreq] = useState<Freq | "">("");
-  const repeat = !!freq;
-  const [every, setEvery] = useState(1);
-  const [weekdays, setWeekdays] = useState<number[]>([]);
-  const [monthBy, setMonthBy] = useState<MonthBy>("date");
-  const [ends, setEnds] = useState<"on" | "after">("on");
-  const [until, setUntil] = useState("");
-  const [notch, setNotch] = useState(0); // where the chosen chip sits, so its settings box can point back at it
-  const [untilSet, setUntilSet] = useState(false); // the person chose the end date; do not move it for them
-  const [count, setCount] = useState(10);
+  // Repeat: how often, on which days, and how it ends. On an existing series it is loaded when "this and following" is chosen.
+  const [rep, setRep] = useState<RepeatChoice>(NO_REPEAT);
+  const repeat = !!rep.freq;
+  const repKey = JSON.stringify(rep);
+  const [loadedRep, setLoadedRep] = useState<string | null>(null); // the series' repeat as loaded, to tell whether it was changed
   const [scope, setScope] = useState<"one" | "series">("one");
 
   const [saving, setSaving] = useState(false);
@@ -113,33 +103,31 @@ export default function AppointmentForm({
     setWarnings([]);
     setReview(null);
     setError(null);
-  }, [typeId, date, start, end, status, freq, every, weekdays, monthBy, ends, until, count, scope]);
+  }, [typeId, date, start, end, status, repKey, scope]);
 
-  // Choosing how often fills in sensible starting values: the start date's weekday, and an end a fitting distance away.
-  function pickFreq(f: Freq | "") {
-    setFreq(f);
-    if (!f) return;
-    const d = DateTime.fromISO(date, { zone: tz });
-    if (!d.isValid) return;
-    if (f === "weekly" && weekdays.length === 0) setWeekdays([d.weekday]);
-    if (!untilSet) setUntil(d.plus(DEFAULT_RUN[f]).toISODate()!);
-  }
-  // Opening More options, or choosing how often, opens fields below the fold: bring them into view.
+  // Opening More options opens fields below the fold: bring them into view.
   const moreRef = useReveal<HTMLDivElement>(more);
-  const repeatRef = useReveal<HTMLFieldSetElement>(`${freq}${ends}`);
-  // The day-of-month choices depend on the date; fall back to "on the date" when the chosen one no longer applies.
-  const monthChoices = monthByChoices(date);
-  const by = monthChoices.some((c) => c.by === monthBy) ? monthBy : "date";
-  const rule: RepeatRule = {
-    freq: freq || "weekly", every, weekdays, monthBy: by, startDate: date, startTime: start, endTime: end, timeZone: tz,
-    ...(ends === "on" ? { endDate: until } : { count }),
-  };
-  const ruleKey = JSON.stringify(rule);
-  // What the rule comes to, shown under it while choosing.
-  const preview = useMemo(() => {
-    if (!freq || !date || !start || !end) return [];
-    try { return expandRule(rule); } catch { return []; }
-  }, [ruleKey, freq]); // eslint-disable-line react-hooks/exhaustive-deps
+  const rule = toRule(rep, date, start, end, tz);
+
+  // Editing "this and following": fetch how the series repeats, so it can be shown and changed.
+  const seriesId = existing?.series_id ?? null;
+  useEffect(() => {
+    if (!seriesId || scope !== "series" || loadedRep !== null) return;
+    let live = true;
+    const read = (cols: string) => supabase.from("appointment_series").select(cols).eq("id", seriesId).maybeSingle();
+    (async () => {
+      let res = await read("rule, weekdays, end_date");
+      if (res.error) res = await read("weekdays, end_date"); // before 0013_repeat_rule.sql there is no rule column
+      if (!live || !res.data) return;
+      const c = choiceFromSeries(res.data as unknown as { rule?: unknown; weekdays: number[]; end_date: string });
+      setRep(c);
+      setLoadedRep(JSON.stringify(c));
+      setMore(true); // the Repeat section sits under More options
+    })();
+    return () => { live = false; };
+  }, [seriesId, scope, loadedRep, supabase]);
+  // On a series, a changed repeat (or first date) means the run from here on is made again, not just edited in place.
+  const rebuild = !!seriesId && scope === "series" && loadedRep !== null && (repKey !== loadedRep || date !== DateTime.fromISO(existing!.starts_at).setZone(tz).toISODate());
 
   const interval = useMemo(() => toInterval(date, start, end, tz), [date, start, end, tz]);
 
@@ -194,9 +182,9 @@ export default function AppointmentForm({
     if (!interval.valid) return "That date or time isn’t valid.";
     if (start === end) return "The end time must be after the start time.";
     if (repeat) {
-      if (freq === "weekly" && !weekdays.length) return "Pick at least one weekday to repeat on.";
-      if (ends === "on" && !until) return "Choose when the repeat ends.";
-      if (ends === "on" && until < date) return "The repeat end date must be on or after the first date.";
+      if (rep.freq === "weekly" && !rep.weekdays.length) return "Pick at least one weekday to repeat on.";
+      if (rep.ends === "on" && !rep.until) return "Choose when the repeat ends.";
+      if (rep.ends === "on" && rep.until < date) return "The repeat end date must be on or after the first date.";
     }
     return null;
   }
@@ -271,14 +259,22 @@ export default function AppointmentForm({
   }
 
   async function reviewSeries(): Promise<OccReview[] | null> {
-    const occ = expandRule(rule);
+    // "Never" on a series being changed leaves just this one appointment.
+    const occ = repeat ? expandRule(rule) : [{ date, starts_at: interval.start.toUTC().toISO()!, ends_at: interval.end.toUTC().toISO()! }];
     if (!occ.length) {
       setError("No date matches that repeat before it ends.");
       return null;
     }
+    // When a series is made again from here on, the appointments it replaces cannot clash with the new ones.
+    let replaced: string[] = [];
+    if (rebuild) {
+      const { data, error } = await supabase.from("appointments").select("id").eq("series_id", seriesId!).gte("starts_at", existing!.starts_at);
+      if (error) throw error;
+      replaced = (data ?? []).map((x: { id: string }) => x.id);
+    }
     const overlapping = await fetchOverlapping(occ[0].starts_at, occ[occ.length - 1].ends_at);
     return occ.map((o) => {
-      const r = findConflicts({ activity_type_id: typeId || null, starts_at: o.starts_at, ends_at: o.ends_at, status }, overlapping);
+      const r = findConflicts({ activity_type_id: typeId || null, starts_at: o.starts_at, ends_at: o.ends_at, status }, overlapping, replaced);
       return { ...o, blocking: r.blocking, warnings: r.warnings, skip: r.blocking.length > 0 };
     });
   }
@@ -289,14 +285,21 @@ export default function AppointmentForm({
       setError("Every date is skipped, so there is nothing to save.");
       return;
     }
-    const { data, error } = await supabase.rpc("create_appointment_series", {
-      series: { weekdays: freq === "weekly" ? weekdays : [], start_date: date, end_date: rev[rev.length - 1].date, start_time: start, end_time: end, time_zone: tz },
+    const args = {
+      series: { weekdays: rep.freq === "weekly" ? rep.weekdays : [], start_date: date, end_date: rev[rev.length - 1].date, start_time: start, end_time: end, time_zone: tz },
       template: fields(),
       occurrences: keep.map((k) => ({ starts_at: k.starts_at, ends_at: k.ends_at })),
-    });
-    if (error) return handleDbError(error);
+    };
+    // Changing a series: this appointment and the ones after it are removed and the new run saved, in one step in the database.
+    const { data, error } = rebuild
+      ? await supabase.rpc("replace_series_from", { p_series: seriesId, p_from: existing!.starts_at, ...args })
+      : await supabase.rpc("create_appointment_series", args);
+    if (error) {
+      if (error.code === "PGRST202") return setError("Changing how a series repeats needs a one-time database update first: run supabase/migrations/0014_series_edit.sql in the Supabase SQL editor.");
+      return handleDbError(error);
+    }
     // Keep the rule with the series. Without 0013_repeat_rule.sql the column is missing and this is skipped; the appointments are saved either way.
-    await supabase.from("appointment_series").update({ rule: { freq, every, weekdays: freq === "weekly" ? weekdays : [], monthBy: by, ...(ends === "on" ? { until } : { count }) } }).eq("id", data as string);
+    if (repeat) await supabase.from("appointment_series").update({ rule: storedRule(rep, date) }).eq("id", data as string);
     await saveGoing({ p_series: data as string });
     await refresh();
     const skipped = rev.length - keep.length;
@@ -356,9 +359,9 @@ export default function AppointmentForm({
     setSaving(true);
     setError(null);
     try {
-      if (existing && existing.series_id && scope === "series") {
+      if (existing && existing.series_id && scope === "series" && !rebuild) {
         await saveSeriesEdit(!!opts.ack);
-      } else if (!existing && repeat) {
+      } else if (rebuild || (!existing && repeat)) {
         if (review) {
           await saveSeries(review);
         } else {
@@ -592,67 +595,11 @@ export default function AppointmentForm({
             <ReminderPicker value={reminder} onChange={setReminder} />
           </fieldset>
 
-          {!existing && (
-            <fieldset className="field reveal" ref={repeatRef}>
-              <legend>Repeat</legend>
-              <div className="chips chips-xs" role="group" aria-label="How often" style={{ marginTop: 0 }}>
-                {([["", "Never"], ["daily", "Daily"], ["weekly", "Weekly"], ["monthly", "Monthly"], ["yearly", "Yearly"]] as const).map(([f, label]) => (
-                  <button type="button" key={f} className={`chip ${freq === f ? "is-selected" : ""}`} aria-pressed={freq === f} onClick={(e) => { setNotch(notchOf(e.currentTarget)); pickFreq(f); }}>{label}</button>
-                ))}
-              </div>
-              {freq && (
-                <div className="repeat subfields" style={{ ["--notch" as string]: `${notch}px` }}>
-                  <div className="repeat-row">
-                    <span className="muted">Every</span>
-                    <input type="number" className="input-inline days-input" min={1} max={99} aria-label={`Every how many ${UNIT[freq]}s`} value={every} onChange={(e) => setEvery(Math.max(1, Math.min(99, Math.floor(Number(e.target.value)) || 1)))} />
-                    <span className="muted">{UNIT[freq]}{every > 1 ? "s" : ""}</span>
-                  </div>
-
-                  {freq === "weekly" && (
-                    <div className="repeat-row">
-                      <span className="chips chips-xs" role="group" aria-label="Weekdays" style={{ marginTop: 0 }}>
-                        {WEEKDAY_LABELS.map((w) => (
-                          <button type="button" key={w.n} className={`chip ${weekdays.includes(w.n) ? "is-selected" : ""}`} aria-pressed={weekdays.includes(w.n)} aria-label={w.long}
-                            onClick={() => setWeekdays(weekdays.includes(w.n) ? weekdays.filter((x) => x !== w.n) : [...weekdays, w.n].sort())}>
-                            {w.short}
-                          </button>
-                        ))}
-                      </span>
-                      <button type="button" className="link" onClick={() => setWeekdays([1, 2, 3, 4, 5])}>Mon to Fri</button>
-                    </div>
-                  )}
-
-                  {(freq === "monthly" || freq === "yearly") && monthChoices.length > 1 && (
-                    <div className="chips chips-xs" role="group" aria-label="Which day" style={{ marginTop: 0 }}>
-                      {monthChoices.map((c) => (
-                        <button type="button" key={c.by} className={`chip ${by === c.by ? "is-selected" : ""}`} aria-pressed={by === c.by} onClick={() => setMonthBy(c.by)}>
-                          {c.label}{freq === "yearly" && c.by !== "date" ? ` of ${DateTime.fromISO(date).monthLong}` : ""}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-
-                  <div className="repeat-row">
-                    <span className="muted">Ends</span>
-                    <span className="chips chips-xs" role="group" aria-label="How it ends" style={{ marginTop: 0 }}>
-                      <button type="button" className={`chip ${ends === "on" ? "is-selected" : ""}`} aria-pressed={ends === "on"} onClick={() => setEnds("on")}>On a date</button>
-                      <button type="button" className={`chip ${ends === "after" ? "is-selected" : ""}`} aria-pressed={ends === "after"} onClick={() => setEnds("after")}>After</button>
-                    </span>
-                    {ends === "on"
-                      ? <input type="date" className="input-inline" aria-label="Last date" value={until} min={date} onChange={(e) => { setUntil(e.target.value); setUntilSet(true); }} />
-                      : <><input type="number" className="input-inline days-input" min={1} max={MAX_OCCURRENCES} aria-label="How many times" value={count} onChange={(e) => setCount(Math.max(1, Math.min(MAX_OCCURRENCES, Math.floor(Number(e.target.value)) || 1)))} /><span className="muted">times</span></>}
-                  </div>
-
-                  {/* The rule read back as a sentence, with what it comes to. */}
-                  <p className={`repeat-summary ${preview.length ? "" : "is-empty"}`} role="status">
-                    <strong>{describeRule(rule)}</strong>
-                    {preview.length > 0
-                      ? <span>{preview.length} appointment{preview.length > 1 ? "s" : ""}, the last on {DateTime.fromISO(preview[preview.length - 1].date).toFormat("ccc d LLL yyyy")}.{preview.length === MAX_OCCURRENCES ? ` That is the most one series can hold.` : ""}</span>
-                      : <span>No date matches yet. {freq === "weekly" && !weekdays.length ? "Pick at least one weekday." : "Check when it ends."}</span>}
-                  </p>
-                </div>
-              )}
-            </fieldset>
+          {(!existing || (scope === "series" && loadedRep !== null)) && (
+            <RepeatPicker
+              value={rep} onChange={setRep} date={date} startTime={start} endTime={end} tz={tz} noun="appointment"
+              note={rebuild && <span className="hint">Saving replaces this appointment and the ones after it with this new run. Earlier ones stay as they are.</span>}
+            />
           )}
         </div>
       )}

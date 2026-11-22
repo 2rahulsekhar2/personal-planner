@@ -123,3 +123,47 @@ export const WEEKDAY_LABELS = [
   { n: 6, short: "Sat", long: "Saturday" },
   { n: 7, short: "Sun", long: "Sunday" },
 ];
+
+/** What the Repeat picker holds: how often ("" is never), every how many, on which days, and how it ends. */
+export interface RepeatChoice {
+  freq: Freq | "";
+  every: number;
+  weekdays: number[];
+  monthBy: MonthBy;
+  ends: "on" | "after";
+  until: string; // yyyy-MM-dd, when ends is "on"
+  count: number; // when ends is "after"
+}
+export const NO_REPEAT: RepeatChoice = { freq: "", every: 1, weekdays: [], monthBy: "date", ends: "on", until: "", count: 10 };
+
+// "On the 4th Tuesday" only exists for some dates; a choice that no longer fits the date falls back to the date itself.
+const monthByFor = (c: RepeatChoice, date: string): MonthBy => (monthByChoices(date).some((m) => m.by === c.monthBy) ? c.monthBy : "date");
+
+/** The picker's choice as a rule that can be expanded, starting on `date`. */
+export function toRule(c: RepeatChoice, date: string, startTime: string, endTime: string, timeZone: string): RepeatRule {
+  return {
+    freq: c.freq || "weekly", every: c.every, weekdays: c.weekdays, monthBy: monthByFor(c, date), startDate: date, startTime, endTime, timeZone,
+    ...(c.ends === "on" ? { endDate: c.until } : { count: c.count }),
+  };
+}
+
+/** The choice as it is kept with a series (appointment_series.rule). */
+export function storedRule(c: RepeatChoice, date: string) {
+  return { freq: c.freq, every: c.every, weekdays: c.freq === "weekly" ? c.weekdays : [], monthBy: monthByFor(c, date), ...(c.ends === "on" ? { until: c.until } : { count: c.count }) };
+}
+
+/**
+ * A stored series back into a choice, for editing. It always ends "on a date", the series' last date: a count
+ * would mean something different part-way through. A series from before rules were stored is weekly on its weekdays.
+ */
+export function choiceFromSeries(s: { rule?: unknown; weekdays?: number[] | null; end_date: string }): RepeatChoice {
+  const r = (s.rule ?? {}) as Partial<RepeatChoice>;
+  const freq = (["daily", "weekly", "monthly", "yearly"] as const).find((f) => f === r.freq) ?? "weekly";
+  return {
+    freq,
+    every: Math.max(1, Math.floor(Number(r.every)) || 1),
+    weekdays: (Array.isArray(r.weekdays) && r.weekdays.length ? r.weekdays : s.weekdays ?? []).map(Number),
+    monthBy: (["date", "weekday", "last"] as const).find((b) => b === r.monthBy) ?? "date",
+    ends: "on", until: s.end_date, count: 10,
+  };
+}
