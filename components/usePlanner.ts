@@ -24,6 +24,8 @@ export function usePlanner() {
   const [allPlaces, setAllPlaces] = useState<Place[]>([]);
   // True once the database is known to have the sharing columns (0006_sharing.sql). Until then nothing offers or sends circle_id.
   const [sharing, setSharing] = useState(false);
+  // True once the database also has who-is-going and task assignment (0008_people.sql).
+  const [people, setPeople] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [types, setTypes] = useState<ActivityType[]>([]);
   const [places, setPlaces] = useState<Place[]>([]);
@@ -59,10 +61,11 @@ export function usePlanner() {
       supabase.from("profiles").select("user_id, time_zone, default_reminder_minutes, show_cancelled").maybeSingle(),
       supabase.from("activity_types").select("id, user_id, name, color, archived_at").order("name"),
       supabase.from("places").select("id, user_id, name, maps_url, notes, archived_at").order("name"),
-      loadTasks(`${TASK_FIELDS}, circle_id`),
+      loadTasks(`${TASK_FIELDS}, circle_id, assignee_id, completed_by`),
     ]);
-    // 42703 = unknown column: the sharing migration has not been run yet.
-    if (tk.error?.code === "42703") tk = await loadTasks(TASK_FIELDS);
+    // A later migration that has not been run makes the newest shape fail: step back one migration at a time.
+    if (tk.error) tk = await loadTasks(`${TASK_FIELDS}, circle_id`);
+    if (tk.error) tk = await loadTasks(TASK_FIELDS);
     const err = p.error || t.error || pl.error || tk.error;
     if (err) {
       setLoadError(err.message);
@@ -98,12 +101,21 @@ export function usePlanner() {
     async (r: { from: string; to: string }) => {
       const query = (fields: string) =>
         supabase.from("appointments").select(fields).lt("starts_at", r.to).gt("ends_at", r.from).order("starts_at");
-      // 42703 = unknown column: a later migration has not been run yet. Fall back to fewer columns so the calendar still works.
-      let { data, error } = await query(`${APPT_FIELDS}, outcome, outcome_reason, custom_activity, custom_place, circle_id`);
-      setSharing(!error);
-      if (error?.code === "42703") ({ data, error } = await query(`${APPT_FIELDS}, outcome, outcome_reason, custom_activity, custom_place`));
-      if (error?.code === "42703") ({ data, error } = await query(`${APPT_FIELDS}, outcome, outcome_reason`));
-      if (error?.code === "42703") ({ data, error } = await query(APPT_FIELDS));
+      // Newest shape first. A later migration that has not been run makes the newest shape fail (unknown column or
+      // relation), so on any error step back one migration at a time; the calendar must load either way. A real
+      // outage fails every shape and is reported below.
+      const shapes = [
+        `${APPT_FIELDS}, outcome, outcome_reason, custom_activity, custom_place, circle_id, participants:appointment_participants(user_id)`,
+        `${APPT_FIELDS}, outcome, outcome_reason, custom_activity, custom_place, circle_id`,
+        `${APPT_FIELDS}, outcome, outcome_reason, custom_activity, custom_place`,
+        `${APPT_FIELDS}, outcome, outcome_reason`,
+        APPT_FIELDS,
+      ];
+      let shape = 0;
+      let { data, error } = await query(shapes[0]);
+      while (error && shape < shapes.length - 1) ({ data, error } = await query(shapes[++shape]));
+      setPeople(shape === 0 && !error);
+      setSharing(shape <= 1 && !error);
       if (error) {
         setLoadError(error.message);
         return;
@@ -142,12 +154,16 @@ export function usePlanner() {
   // Shared by the Tasks page and the Day view's task rows.
   const completeTask = useCallback(
     async (t: Task) => {
-      const { error } = await supabase.from("tasks").update({ state: "completed", completed_at: new Date().toISOString() }).eq("id", t.id);
+      // With assignment in the database, go through the function: it also lets the assignee (or anyone, on an
+      // unassigned shared task) finish someone else's task, and records who did.
+      const { error } = people
+        ? await supabase.rpc("set_task_done", { p_task: t.id, p_done: true })
+        : await supabase.from("tasks").update({ state: "completed", completed_at: new Date().toISOString() }).eq("id", t.id);
       if (error) return toast("error", `Couldn’t update: ${error.message}`);
       await refresh();
       toast("ok", `Done: ${t.title}`);
     },
-    [supabase, toast, refresh],
+    [supabase, toast, refresh, people],
   );
 
   const typeById = useMemo(() => new Map(allTypes.map((t) => [t.id, t])), [allTypes]);
@@ -158,6 +174,7 @@ export function usePlanner() {
     email,
     userId,
     sharing,
+    people,
     profile,
     setProfile,
     tz,

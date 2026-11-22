@@ -3,7 +3,7 @@ import { useRef, useState } from "react";
 import { DateTime } from "luxon";
 import type { PlannerCtx } from "./usePlanner";
 import type { Task } from "@/lib/types";
-import type { Circle } from "@/lib/circles";
+import { seatsOf, type Circle } from "@/lib/circles";
 import { hhmm, isTaskOverdue, localToDateTime, todayISO } from "@/lib/time";
 
 export default function TaskForm({ ctx, circles, circleId: startCircle, existing, date, onDone }: { ctx: PlannerCtx; circles: Circle[]; circleId?: string; existing?: Task; date?: string; onDone: () => void }) {
@@ -21,6 +21,10 @@ export default function TaskForm({ ctx, circles, circleId: startCircle, existing
   const [notes, setNotes] = useState(existing?.notes ?? "");
   // Shared with this circle, or "" for private. New ones start in the circle being viewed.
   const [circleId, setCircleId] = useState(existing ? existing.circle_id ?? "" : startCircle ?? "");
+  // On a shared task: the member it is for, or "" for anyone in the circle.
+  const [assignee, setAssignee] = useState(existing?.assignee_id ?? "");
+  const members = seatsOf(circles.find((c) => c.id === circleId) ?? { id: "", name: "", owner_id: "", circle_members: [] });
+  const share = (id: string) => { setCircleId(id); setAssignee(""); };
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestId = useRef<string>(crypto.randomUUID());
@@ -49,7 +53,7 @@ export default function TaskForm({ ctx, circles, circleId: startCircle, existing
     setSaving(true);
     setError(null);
     // circle_id is sent only when the database has the sharing columns.
-    const row = { title: title.trim(), due_date: due, due_time: dueTime || null, notify_at: notifyAt, notes: notes.trim() || null, ...(ctx.sharing ? { circle_id: circleId || null } : {}) };
+    const row = { title: title.trim(), due_date: due, due_time: dueTime || null, notify_at: notifyAt, notes: notes.trim() || null, ...(ctx.sharing ? { circle_id: circleId || null } : {}), ...(ctx.people ? { assignee_id: circleId ? assignee || null : null } : {}) };
     const { error } = existing
       ? await supabase.from("tasks").update(row).eq("id", existing.id)
       : await supabase.from("tasks").insert({ ...row, client_request_id: requestId.current });
@@ -99,12 +103,27 @@ export default function TaskForm({ ctx, circles, circleId: startCircle, existing
         <fieldset className="field">
           <legend>Share with</legend>
           <div className="chips chips-xs" style={{ marginTop: 0 }}>
-            <button type="button" className={`chip ${!circleId ? "is-selected" : ""}`} aria-pressed={!circleId} onClick={() => setCircleId("")}>Just me</button>
+            <button type="button" className={`chip ${!circleId ? "is-selected" : ""}`} aria-pressed={!circleId} onClick={() => share("")}>Just me</button>
             {circles.map((c) => (
-              <button type="button" key={c.id} className={`chip ${circleId === c.id ? "is-selected" : ""}`} aria-pressed={circleId === c.id} onClick={() => setCircleId(c.id)}>{c.name}</button>
+              <button type="button" key={c.id} className={`chip ${circleId === c.id ? "is-selected" : ""}`} aria-pressed={circleId === c.id} onClick={() => share(c.id)}>{c.name}</button>
             ))}
           </div>
           {circleId && <span className="hint">Everyone in {circles.find((c) => c.id === circleId)?.name} can see this. Only you can change it.</span>}
+        </fieldset>
+      )}
+
+      {ctx.people && circleId && members.length > 1 && (
+        <fieldset className="field">
+          <legend>Who does it</legend>
+          <div className="chips chips-xs" style={{ marginTop: 0 }}>
+            <button type="button" className={`chip ${!assignee ? "is-selected" : ""}`} aria-pressed={!assignee} onClick={() => setAssignee("")}>Anyone</button>
+            {members.map((m) => (
+              <button type="button" key={m.user_id} className={`chip ${assignee === m.user_id ? "is-selected" : ""}`} aria-pressed={assignee === m.user_id} title={m.email} onClick={() => setAssignee(m.user_id)}>
+                <span className={`who act-${m.color}`} aria-hidden>{m.letter}</span> {m.user_id === ctx.userId ? "Me" : m.email.split("@")[0]}
+              </button>
+            ))}
+          </div>
+          <span className="hint">{assignee ? "They can mark it done, and so can you." : "Whoever does it can mark it done."}</span>
         </fieldset>
       )}
 

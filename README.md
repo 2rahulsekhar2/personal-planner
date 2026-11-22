@@ -20,7 +20,7 @@ tasks never block time, and reminder status is shown honestly per device.
 
 ## Setup (about 20 minutes)
 
-1. **Supabase.** Create a free project at supabase.com. In *SQL Editor*, run `supabase/migrations/0001_init.sql`, then `0002_appointment_outcome.sql`, `0003_custom_activity_place.sql`, `0004_custom_activity_refs.sql`, `0005_circles.sql`, `0006_sharing.sql` and `0007_activity.sql` from the same folder, in that order.
+1. **Supabase.** Create a free project at supabase.com. In *SQL Editor*, run `supabase/migrations/0001_init.sql`, then `0002_appointment_outcome.sql`, `0003_custom_activity_place.sql`, `0004_custom_activity_refs.sql`, `0005_circles.sql`, `0006_sharing.sql`, `0007_activity.sql` and `0008_people.sql` from the same folder, in that order.
 2. **Sign-in.** In *Authentication → Providers*, email (magic link) is on by default. To add Google, enable the Google provider and paste a Google OAuth client ID/secret (Google Cloud Console → Credentials → OAuth client, redirect URI shown by Supabase). In *Authentication → URL Configuration*, set Site URL to your Vercel URL and add `https://YOUR-APP.vercel.app/**` (and `http://localhost:3000/**` for local dev) to Redirect URLs. The wildcard is needed because the password-reset link adds a query string to `/auth/callback`.
 3. **Push keys.** Run `npx web-push generate-vapid-keys`.
 4. **Vercel.** Import this repo at vercel.com/new and add the variables from `.env.example`. Deploy.
@@ -37,6 +37,27 @@ npm install
 npm run dev
 npm test                     # conflict + recurrence unit tests
 ```
+
+### A separate database for development
+
+Use a second Supabase project for local work, so testing never touches live data and a new migration can be tried
+before production gets it. Production keeps its project and its Vercel variables; only `.env.local` changes.
+
+1. Create a second free Supabase project (for example `planner-dev`).
+2. Copy every migration to the clipboard, paste it into that project's *SQL Editor*, and run it:
+   ```bash
+   cat supabase/migrations/*.sql | pbcopy
+   ```
+3. In the dev project's *Authentication → URL Configuration*, set Site URL to `http://localhost:3000` and add
+   `http://localhost:3000/**` to Redirect URLs. Google sign-in needs its own setup per project; email and password
+   work without it.
+4. In `.env.local`, set `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY` and `SUPABASE_SERVICE_ROLE_KEY`
+   to the dev project's values (*Project Settings → API*). Leave the other variables as they are.
+5. Restart `npm run dev` and create an account in the dev project. It starts empty.
+
+Skip `supabase/cron.sql` on the dev project: reminders are sent by a schedule that calls the deployed app.
+
+From then on, run each new migration on the dev project first, and on production when its code is merged.
 
 ## Not in v1
 

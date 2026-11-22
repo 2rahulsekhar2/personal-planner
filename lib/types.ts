@@ -45,12 +45,16 @@ export interface Appointment {
   // One-off free text for this appointment only. Absent until supabase/migrations/0003_custom_activity_place.sql has been run.
   custom_activity?: string | null;
   custom_place?: string | null;
+  // The other members going, besides the creator. Absent until supabase/migrations/0008_people.sql has been run.
+  participants?: { user_id: string }[];
 }
 
 export interface Task {
   id: string;
   user_id: string;
   circle_id?: string | null;
+  assignee_id?: string | null; // on a shared task: the member it is for; null means anyone in the circle
+  completed_by?: string | null;
   title: string;
   due_date: string; // yyyy-MM-dd
   due_time: string | null; // HH:mm[:ss]
