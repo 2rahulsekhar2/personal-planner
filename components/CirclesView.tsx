@@ -14,6 +14,9 @@ const ACCESS = [{ days: 0, label: "For good" }, { days: 1, label: "1 day" }, { d
 const stay = (days?: number | null) => (days ? ` Your access lasts ${days === 1 ? "1 day" : `${days} days`} from when you join.` : "");
 const dayLabel = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: "numeric", month: "short" });
 // "Viewer, until 3 Dec", "Member, access ended".
+// A date field works in local days: yyyy-MM-dd of when access ends, and back to the last second of that day.
+const localDay = (iso: string) => new Date(iso).toLocaleDateString("en-CA");
+const endOfDay = (day: string) => new Date(`${day}T23:59:59`).toISOString();
 const accessNote = (m: CircleMember) => (!m.expires_at ? "" : isCurrent(m) ? `, until ${dayLabel(m.expires_at)}` : ", access ended");
 
 export default function CirclesView({ ctx, state, linkToken, clearLink }: { ctx: PlannerCtx; state: CirclesState; linkToken: string | null; clearLink: () => void }) {
@@ -102,6 +105,17 @@ export default function CirclesView({ ctx, state, linkToken, clearLink }: { ctx:
 
   const circleCard = (c: Circle) => {
     const owner = c.owner_id === userId;
+    // My access ended: the circle's name is all I can still see. Leaving removes me from it for good.
+    const self = c.circle_members.find((m) => m.user_id === userId);
+    if (self && !isCurrent(self)) {
+      return (
+        <section key={c.id} className="card stack">
+          <h2 className="circle-name">{c.name}</h2>
+          <p className="muted">Your access ended on {dayLabel(self.expires_at!)}. You no longer see what this circle shares. The owner can let you back in.</p>
+          <div className="form-actions">{sure(`leave:${c.id}`, "Leave circle", `Leave ${c.name}`, () => run("leave_circle", { p_circle: c.id }, `You left ${c.name}`))}</div>
+        </section>
+      );
+    }
     const others = c.circle_members.filter((m) => m.user_id !== userId);
     const sent = invites.filter((i) => i.circle_id === c.id && isOpen(i));
     const d = draft?.circle === c.id ? draft : null;
@@ -149,6 +163,13 @@ export default function CirclesView({ ctx, state, linkToken, clearLink }: { ctx:
               {owner && m.user_id !== userId && (
                 <span className="row-actions">
                   {roles && <button className="btn btn-sm btn-ghost" disabled={busy} onClick={() => run("update_circle_member", { p_circle: c.id, p_user: m.user_id, p_role: m.role === "viewer" ? "member" : "viewer", p_until: m.expires_at ?? null }, `${m.email} is now a ${m.role === "viewer" ? "member" : "viewer"}`)}>{m.role === "viewer" ? "Make member" : "Make viewer"}</button>}
+                  {roles && (
+                    <input
+                      type="date" className="input-inline" aria-label={`Date ${m.email}'s access ends`} title="Access ends on"
+                      value={m.expires_at ? localDay(m.expires_at) : ""} min={localDay(new Date().toISOString())} disabled={busy}
+                      onChange={(e) => run("update_circle_member", { p_circle: c.id, p_user: m.user_id, p_role: m.role, p_until: e.target.value ? endOfDay(e.target.value) : null }, e.target.value ? `${m.email} stays until ${dayLabel(endOfDay(e.target.value))}` : `${m.email} stays for good`)}
+                    />
+                  )}
                   {roles && m.expires_at && <button className="btn btn-sm btn-ghost" disabled={busy} onClick={() => run("update_circle_member", { p_circle: c.id, p_user: m.user_id, p_role: m.role, p_until: null }, `${m.email} stays for good`)}>Keep for good</button>}
                   {sure(`own:${c.id}:${m.user_id}`, "Make owner", "Hand over", () => run("transfer_circle", { p_circle: c.id, p_user: m.user_id }, `${m.email} now owns ${c.name}`))}
                   {sure(`rm:${c.id}:${m.user_id}`, "Remove", "Remove", () => run("remove_circle_member", { p_circle: c.id, p_user: m.user_id }, `${m.email} removed`))}
@@ -161,10 +182,12 @@ export default function CirclesView({ ctx, state, linkToken, clearLink }: { ctx:
               <span className="avatar avatar-sm avatar-pending" aria-hidden>?</span>
               <span className="grow circle-who">
                 <span className="circle-email">{i.email ?? "Invite link"}</span>
-                <span className="muted">Invited. {expiryLabel(i.expires_at)}</span>
+                <span className="muted">Invited{i.access_days ? `, to stay ${i.access_days === 1 ? "1 day" : `${i.access_days} days`}` : ""}. {expiryLabel(i.expires_at)}</span>
               </span>
               {owner && (
                 <span className="row-actions">
+                  {/* Planner sends no email itself: this opens the owner's own mail app with the invite written out. */}
+                  {i.email && <a className="btn btn-sm btn-ghost" href={`mailto:${i.email}?subject=${encodeURIComponent(`Join ${c.name} on Planner`)}&body=${encodeURIComponent(`I've invited you to "${c.name}" on Planner, where we plan together.\n\nOpen this link and sign in with ${i.email}:\n${inviteLink(i.token)}\n\nThe invite ${expiryLabel(i.expires_at).toLowerCase()}.`)}`}>Email it</a>}
                   <button className="btn btn-sm btn-ghost" onClick={() => copy(i.token)}>Copy link</button>
                   <button className="btn btn-sm btn-ghost" disabled={busy} onClick={() => run("revoke_invite", { p_invite: i.id }, "Invite withdrawn")}>Withdraw</button>
                 </span>
@@ -193,6 +216,7 @@ export default function CirclesView({ ctx, state, linkToken, clearLink }: { ctx:
                     <button key={a.days} type="button" className={`chip ${d.days === a.days ? "is-selected" : ""}`} aria-pressed={d.days === a.days} onClick={() => setDraft({ ...d, days: a.days })}>{a.label}</button>
                   ))}
                 </span>
+                <input type="number" className="input-inline days-input" min={1} max={365} aria-label="Or a number of days" placeholder="days" value={d.days || ""} onChange={(e) => setDraft({ ...d, days: Math.max(0, Math.min(365, Math.floor(Number(e.target.value) || 0))) })} />
               </div>
             )}
             <div className="row">
@@ -200,7 +224,7 @@ export default function CirclesView({ ctx, state, linkToken, clearLink }: { ctx:
               <button type="button" className="btn" disabled={busy} onClick={() => invite(c.id, "", d.role, d.days)}>Copy a one-time link</button>
               <button type="button" className="btn btn-ghost" onClick={() => setDraft(null)}>Cancel</button>
             </div>
-            <p className="hint">No email is sent: they see the invite when they sign in with this address. A link works for whoever opens it first. A viewer can look, but cannot add, be given tasks, or finish them.</p>
+            <p className="hint">Planner sends no email itself: after inviting, press Email it or share the link. They also see the invite when they sign in with this address. A link works for whoever opens it first. A viewer can look, but cannot add, be given tasks, or finish them.</p>
           </form>
         )}
 

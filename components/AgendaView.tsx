@@ -5,9 +5,10 @@ import { fmtClock, fmtRange, relativeDayLabel, weekFromToday, todayISO, isTaskOv
 import { TaskChip, visibleAppointments } from "./WeekView";
 
 export default function AgendaView({
-  ctx, day, setDay, onOpen, onOpenTask, toggle, whoOf, scopeBar,
+  ctx, day, setDay, onOpen, onOpenTask, toggle, whoOf, mayFinish, scopeBar,
 }: {
   ctx: PlannerCtx;
+  mayFinish: (t: PlannerCtx["tasks"][number]) => boolean; // may this person mark the task done
   day: string;
   setDay: (d: string) => void;
   onOpen: (id: string) => void;
@@ -116,8 +117,7 @@ export default function AgendaView({
           {[...overdue, ...dayTasks.filter((t) => !overdue.includes(t))].map((t) => {
             const late = isTaskOverdue(t, tz);
             const done = t.state !== "pending";
-            // Mine, or a shared task that is for me or for anyone.
-            const canDo = t.user_id === ctx.userId || (ctx.people && !!t.circle_id && (!t.assignee_id || t.assignee_id === ctx.userId));
+            const canDo = mayFinish(t);
             return (
               <div key={t.id} className={`day-task ${late ? "is-overdue" : ""} ${done ? "is-done" : ""}`}>
                 <button className="day-task-check" disabled={done || !canDo} aria-label={done ? "Done" : !canDo ? "Not yours to mark done" : `Mark “${t.title}” done`} onClick={() => ctx.completeTask(t)}>

@@ -422,6 +422,7 @@ input:not([type="checkbox"]), select, textarea {
 input[aria-invalid="true"] { border-color: var(--danger); }
 textarea { resize: vertical; }
 .input-inline { width: auto !important; min-height: 36px !important; }
+.days-input { width: 76px !important; }
 .check { display: inline-flex; align-items: flex-start; gap: 8px; cursor: pointer; }
 .check input { width: 18px; height: 18px; margin-top: 2px; accent-color: var(--accent); }
 .subform { border: 1px dashed var(--line-2); border-radius: 10px; padding: 12px; margin-top: 8px; display: flex; flex-direction: column; gap: 10px; }
