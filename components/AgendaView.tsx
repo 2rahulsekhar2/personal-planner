@@ -1,12 +1,16 @@
 "use client";
+import { useCallback, useState } from "react";
 import { DateTime } from "luxon";
+import SlotMenu, { type Slot } from "./SlotMenu";
 import type { PlannerCtx } from "./usePlanner";
 import { fmtClock, fmtRange, relativeDayLabel, weekFromToday, todayISO, isTaskOverdue, fmtShortTime } from "@/lib/time";
 import { TaskChip, visibleAppointments } from "./WeekView";
 
 export default function AgendaView({
-  ctx, day, setDay, onOpen, onOpenTask, toggle, whoOf, mayFinish, scopeBar,
+  ctx, day, setDay, onOpen, onOpenTask, onCreate, onCreateTask, toggle, whoOf, mayFinish, scopeBar,
 }: {
+  onCreate: (date: string, start: string, end: string) => void;
+  onCreateTask: (date: string, time: string) => void;
   ctx: PlannerCtx;
   mayFinish: (t: PlannerCtx["tasks"][number]) => boolean; // may this person mark the task done
   day: string;
@@ -47,6 +51,20 @@ export default function AgendaView({
   }
   if (limit.diff(cursor, "minutes").minutes >= 30) gaps.push({ from: cursor, to: limit });
 
+  // Pressing free time asks what to put there. It starts on the next quarter hour and runs an hour, or to the end of the gap.
+  const [slot, setSlot] = useState<Slot | null>(null);
+  const closeSlot = useCallback(() => setSlot(null), []);
+  const ask = (e: React.MouseEvent, from: DateTime, to: DateTime) => {
+    const up = from.plus({ minutes: (15 - (from.minute % 15)) % 15 }).startOf("minute");
+    const start = up < to ? up : from;
+    const end = DateTime.min(start.plus({ hours: 1 }), to);
+    // A press from the keyboard has no pointer position: open beside the row instead.
+    const r = e.currentTarget.getBoundingClientRect();
+    setSlot({ iso: day, start: start.toFormat("HH:mm"), end: end.toFormat("HH:mm"), x: e.clientX || r.left, y: e.clientY || r.bottom });
+  };
+  // With no gap left to press (a full day, or late evening today), one row still offers to add something.
+  const spare = (day === today ? DateTime.now().setZone(tz) : dayStart.set({ hour: 9 })).startOf("minute");
+
   type Row = { at: string; node: React.ReactNode };
   const rows: Row[] = [
     ...items.map((a) => {
@@ -75,9 +93,10 @@ export default function AgendaView({
     ...gaps.map((g) => ({
       at: g.from.toUTC().toISO()!,
       node: (
-        <div key={"gap" + g.from.toISO()} className="agenda-gap">
-          Free {fmtShortTime(g.from, tz)} – {fmtShortTime(g.to, tz)}
-        </div>
+        <button key={"gap" + g.from.toISO()} className="agenda-gap" aria-label={`Free ${fmtShortTime(g.from, tz)} to ${fmtShortTime(g.to, tz)}. Add an appointment or task`} onClick={(e) => ask(e, g.from, g.to)}>
+          <span>Free {fmtShortTime(g.from, tz)} – {fmtShortTime(g.to, tz)}</span>
+          <svg className="agenda-gap-plus" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
+        </button>
       ),
     })),
   ].sort((a, b) => a.at.localeCompare(b.at));
@@ -138,7 +157,14 @@ export default function AgendaView({
         <h2 className="section-title">Appointments</h2>
         {items.length === 0 && <p className="empty">Nothing booked. The whole day is free.</p>}
         {rows.map((r) => r.node)}
+        {gaps.length === 0 && day >= today && (
+          <button className="agenda-gap" onClick={(e) => ask(e, spare, DateTime.min(spare.plus({ hours: 2 }), dayEnd.minus({ minutes: 1 })))}>
+            <span>Add to this day</span>
+            <svg className="agenda-gap-plus" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
+          </button>
+        )}
       </section>
+      {slot && <SlotMenu slot={slot} onClose={closeSlot} onAppointment={() => { setSlot(null); onCreate(slot.iso, slot.start, slot.end); }} onTask={() => { setSlot(null); onCreateTask(slot.iso, slot.start); }} />}
     </div>
   );
 }

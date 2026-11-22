@@ -6,7 +6,7 @@ import type { Task } from "@/lib/types";
 import { isCurrent, seatsOf, type Circle } from "@/lib/circles";
 import { hhmm, isTaskOverdue, localToDateTime, todayISO } from "@/lib/time";
 
-export default function TaskForm({ ctx, circles, circleId: startCircle, existing, date, onDone }: { ctx: PlannerCtx; circles: Circle[]; circleId?: string; existing?: Task; date?: string; onDone: () => void }) {
+export default function TaskForm({ ctx, circles, circleId: startCircle, existing, date, time, onDone }: { ctx: PlannerCtx; circles: Circle[]; circleId?: string; existing?: Task; date?: string; time?: string; onDone: () => void }) {
   const { tz, supabase, refresh, toast } = ctx;
   const today = todayISO(tz);
   const tomorrow = DateTime.fromISO(today, { zone: tz }).plus({ days: 1 }).toISODate()!;
@@ -14,7 +14,7 @@ export default function TaskForm({ ctx, circles, circleId: startCircle, existing
 
   const [title, setTitle] = useState(existing?.title ?? "");
   const [due, setDue] = useState(existing?.due_date ?? date ?? today);
-  const [dueTime, setDueTime] = useState(hhmm(existing?.due_time));
+  const [dueTime, setDueTime] = useState(existing ? hhmm(existing.due_time) : time ?? "");
   const [notify, setNotify] = useState(!!exNotify);
   const [notifyDate, setNotifyDate] = useState(exNotify?.toISODate() ?? existing?.due_date ?? date ?? today);
   const [notifyTime, setNotifyTime] = useState(exNotify?.toFormat("HH:mm") ?? "");
