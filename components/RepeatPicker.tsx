@@ -12,8 +12,9 @@ const DEFAULT_RUN = { daily: { weeks: 2 }, weekly: { weeks: 8 }, monthly: { mont
 // How often something repeats, shared by the appointment and task forms. Each line reads as a clause
 // (Every 2 weeks / on Mon, Wed / Ends after 10 times), then the rule is said back whole with what it comes to.
 export default function RepeatPicker({
-  value, onChange, date, startTime, endTime, tz, noun, note,
+  value, onChange, date, startTime, endTime, tz, noun, note, neverLabel = "Never",
 }: {
+  neverLabel?: string; // what the first chip says: on an existing run, choosing nothing means "keep the dates"
   value: RepeatChoice;
   onChange: (c: RepeatChoice) => void;
   date: string; // the first date, yyyy-MM-dd
@@ -50,7 +51,7 @@ export default function RepeatPicker({
     <fieldset className="field reveal" ref={ref}>
       <legend>Repeat</legend>
       <div className="chips chips-xs" role="group" aria-label="How often" style={{ marginTop: 0 }}>
-        {([["", "Never"], ["daily", "Daily"], ["weekly", "Weekly"], ["monthly", "Monthly"], ["yearly", "Yearly"]] as const).map(([f, label]) => (
+        {([["", neverLabel], ["daily", "Daily"], ["weekly", "Weekly"], ["monthly", "Monthly"], ["yearly", "Yearly"]] as const).map(([f, label]) => (
           <button type="button" key={f} className={`chip ${freq === f ? "is-selected" : ""}`} aria-pressed={freq === f} onClick={(e) => { setNotch(notchOf(e.currentTarget)); pickFreq(f); }}>{label}</button>
         ))}
       </div>
