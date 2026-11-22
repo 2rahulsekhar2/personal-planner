@@ -4,7 +4,7 @@ import { DateTime } from "luxon";
 import SlotMenu, { type Slot } from "./SlotMenu";
 import type { PlannerCtx } from "./usePlanner";
 import { fmtClock, fmtRange, relativeDayLabel, weekFromToday, todayISO, isTaskOverdue, fmtShortTime } from "@/lib/time";
-import { TaskChip, visibleAppointments } from "./WeekView";
+import { visibleAppointments } from "./WeekView";
 
 export default function AgendaView({
   ctx, day, setDay, onOpen, onOpenTask, onCreate, onCreateTask, toggle, whoOf, mayFinish, scopeBar,

@@ -1,7 +1,8 @@
 "use client";
 import { useEffect, useMemo, useState } from "react";
 import type { PlannerCtx } from "./usePlanner";
-import { REMINDER_CHOICES, type PushSubscriptionRow } from "@/lib/types";
+import type { PushSubscriptionRow } from "@/lib/types";
+import ReminderPicker from "./ReminderPicker";
 import { deviceTimeZone } from "@/lib/time";
 import { useNotificationStatus, STATUS_LABEL } from "./NotificationBadge";
 import Select from "./Select";
@@ -168,13 +169,8 @@ export default function SettingsView({ ctx }: { ctx: PlannerCtx }) {
         <h2 className="set-title">Defaults</h2>
         <div className="card set-card">
           <div className="set-row">
-            <label htmlFor="set-reminder" className="set-label">Default appointment reminder</label>
-            <Select
-              id="set-reminder"
-              value={profile?.default_reminder_minutes == null ? "none" : String(profile.default_reminder_minutes)}
-              options={REMINDER_CHOICES.map((c) => ({ value: c.value === null ? "none" : String(c.value), label: c.label }))}
-              onChange={(v) => update({ default_reminder_minutes: v === "none" ? null : Number(v) })}
-            />
+            <span className="set-label">Default appointment reminder</span>
+            <ReminderPicker id="set-reminder" value={profile?.default_reminder_minutes ?? null} onChange={(v) => update({ default_reminder_minutes: v })} />
           </div>
           <div className="set-row">
             <div>

@@ -3,7 +3,7 @@ import { useState } from "react";
 import { DateTime } from "luxon";
 import type { PlannerCtx } from "./usePlanner";
 import type { Appointment } from "@/lib/types";
-import { REMINDER_CHOICES } from "@/lib/types";
+import { reminderLabel as labelFor } from "@/lib/types";
 import { fmtRange } from "@/lib/time";
 import { isOverlapError } from "@/lib/conflicts";
 import type { Circle } from "@/lib/circles";
@@ -62,10 +62,7 @@ export default function AppointmentDetails({
   const by = sharedIn?.circle_members.find((m) => m.user_id === appt.user_id)?.email;
   const p = appt.place_id ? placeById.get(appt.place_id) : null;
   const start = DateTime.fromISO(appt.starts_at).setZone(tz);
-  const reminderLabel =
-    appt.reminder_minutes === null
-      ? "No reminder"
-      : REMINDER_CHOICES.find((c) => c.value === appt.reminder_minutes)?.label ?? `${appt.reminder_minutes} minutes before`;
+  const reminderLabel = labelFor(appt.reminder_minutes);
 
   // Listed as going by the creator: my own row, where my reply lives.
   const myPart = appt.participants?.find((x) => x.user_id === ctx.userId);
@@ -201,7 +198,7 @@ export default function AppointmentDetails({
             </dd>
           </>
         )}
-        {appt.series_id && (<><dt><Icon d="M17 3l3 3-3 3M20 6H9a5 5 0 0 0-5 5M7 21l-3-3 3-3M4 18h11a5 5 0 0 0 5-5" /><span className="sr-only">Repeats</span></dt><dd>Part of a weekly series</dd></>)}
+        {appt.series_id && (<><dt><Icon d="M17 3l3 3-3 3M20 6H9a5 5 0 0 0-5 5M7 21l-3-3 3-3M4 18h11a5 5 0 0 0 5-5" /><span className="sr-only">Repeats</span></dt><dd>Part of a repeating series</dd></>)}
         <dt><Icon d="M5 4h14v11l-5 5H5zM14 20v-5h5M8.5 9h7M8.5 12.5h4" /><span className="sr-only">Notes</span></dt>
         <dd>
           {note !== null ? (
