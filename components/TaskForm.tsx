@@ -28,7 +28,10 @@ export default function TaskForm({ ctx, circles, circleId: startCircle, existing
   // Viewers, and people whose access has ended, cannot be given a task.
   const members = seatsOf(circles.find((c) => c.id === circleId) ?? { id: "", name: "", owner_id: "", circle_members: [] }).filter((m) => m.role !== "viewer" && isCurrent(m));
   const share = (id: string) => { setCircleId(id); setAssignee(""); };
-  const [rep, setRep] = useState<RepeatChoice>(NO_REPEAT); // new tasks only: one task is made for each date
+  const [rep, setRep] = useState<RepeatChoice>(NO_REPEAT); // one task is made for each date
+  // On a pending task from a repeat: change only this one, or this and the later ones still pending.
+  const inRun = !!existing?.series_id && existing.state === "pending";
+  const [scope, setScope] = useState<"one" | "series">("one");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const requestId = useRef<string>(crypto.randomUUID());
@@ -46,8 +49,11 @@ export default function TaskForm({ ctx, circles, circleId: startCircle, existing
     if (saving) return;
     if (!title.trim()) return setError("Give the task a title.");
     if (!due) return setError("Choose a due date.");
+    // On a task from a repeat: "one" changes this task; "series" also reaches the later ones still pending.
+    const run = !!existing?.series_id && scope === "series";
+    const remake = run && !!rep.freq; // a new repeat was chosen: the run from here on is made again
     // A repeating task becomes one task per date. The times do not matter here: only the dates are used.
-    const dates = !existing && rep.freq ? expandRule(toRule(rep, due, "00:00", "00:01", tz)).map((o) => o.date) : [due];
+    const dates = (!existing || remake) && rep.freq ? expandRule(toRule(rep, due, "00:00", "00:01", tz)).map((o) => o.date) : [due];
     if (!dates.length) return setError("No date matches that repeat before it ends.");
     let notifyAt: string | null = null;
     if (notify) {
@@ -59,27 +65,45 @@ export default function TaskForm({ ctx, circles, circleId: startCircle, existing
     }
     setSaving(true);
     setError(null);
-    // circle_id is sent only when the database has the sharing columns.
-    const row = { title: title.trim(), due_date: due, due_time: dueTime || null, notify_at: notifyAt, notes: notes.trim() || null, ...(ctx.sharing ? { circle_id: circleId || null } : {}), ...(ctx.people ? { assignee_id: circleId ? assignee || null : null } : {}) };
+    // What every task of a run has in common. circle_id is sent only when the database has the sharing columns.
+    const shared = { title: title.trim(), due_time: dueTime || null, notes: notes.trim() || null, ...(ctx.sharing ? { circle_id: circleId || null } : {}), ...(ctx.people ? { assignee_id: circleId ? assignee || null : null } : {}) };
+    const row = { ...shared, due_date: due, notify_at: notifyAt };
+    // One row per date, each with its notification the same distance from its due date as on the first.
+    const shift = notifyAt ? DateTime.fromISO(notifyDate).diff(DateTime.fromISO(due), "days").days : 0;
+    const rows = dates.map((d) => {
+      const n = notifyAt ? localToDateTime(DateTime.fromISO(d).plus({ days: shift }).toISODate()!, notifyTime, tz) : null;
+      return { ...row, due_date: d, notify_at: n && n > DateTime.now() ? n.toUTC().toISO() : null, client_request_id: crypto.randomUUID() };
+    });
     let error;
-    if (existing) ({ error } = await supabase.from("tasks").update(row).eq("id", existing.id));
-    else if (dates.length === 1 && !rep.freq) ({ error } = await supabase.from("tasks").insert({ ...row, client_request_id: requestId.current }));
+    let done = "Task saved";
+    if (remake) {
+      // The new run is saved before the old one is removed, so a failure in between leaves too many tasks, never too few.
+      const old = await supabase.from("tasks").select("id").eq("series_id", existing!.series_id).eq("state", "pending").gte("due_date", existing!.due_date);
+      error = old.error;
+      if (!error) ({ error } = await supabase.from("tasks").insert(rows.map((r) => ({ ...r, series_id: existing!.series_id }))));
+      if (!error) ({ error } = await supabase.from("tasks").delete().in("id", (old.data ?? []).map((t: { id: string }) => t.id)));
+      done = `Replaced with ${rows.length} task${rows.length > 1 ? "s" : ""}`;
+    } else if (existing) {
+      ({ error } = await supabase.from("tasks").update(row).eq("id", existing.id));
+      done = "Task updated";
+      if (!error && run) {
+        // The later ones keep their own dates and notifications.
+        const later = await supabase.from("tasks").update(shared).eq("series_id", existing.series_id).eq("state", "pending").gt("due_date", existing.due_date).select("id");
+        error = later.error;
+        done = `Updated this and ${later.data?.length ?? 0} following`;
+      }
+    } else if (!rep.freq) ({ error } = await supabase.from("tasks").insert({ ...row, client_request_id: requestId.current }));
     else {
-      // Each date gets its own task, with its notification the same distance from its due date as on the first.
-      const shift = notifyAt ? DateTime.fromISO(notifyDate).diff(DateTime.fromISO(due), "days").days : 0;
-      const series = crypto.randomUUID();
-      const rows = dates.map((d) => {
-        const n = notifyAt ? localToDateTime(DateTime.fromISO(d).plus({ days: shift }).toISODate()!, notifyTime, tz) : null;
-        return { ...row, due_date: d, notify_at: n && n > DateTime.now() ? n.toUTC().toISO() : null, client_request_id: crypto.randomUUID() };
-      });
+      const series = crypto.randomUUID(); // one id for the whole run
       ({ error } = await supabase.from("tasks").insert(rows.map((r) => ({ ...r, series_id: series }))));
       // Without 0014_series_edit.sql there is no series_id column: save them as separate tasks.
       if (error && (error.code === "42703" || error.code === "PGRST204")) ({ error } = await supabase.from("tasks").insert(rows));
+      done = `Saved ${rows.length} tasks`;
     }
     setSaving(false);
     if (error && error.code !== "23505") return setError(`Couldn’t save: ${error.message}. Try again.`);
     await refresh();
-    toast("ok", existing ? "Task updated" : dates.length > 1 ? `Saved ${dates.length} tasks` : "Task saved");
+    toast("ok", done);
     onDone();
   }
 
@@ -117,6 +141,15 @@ export default function TaskForm({ ctx, circles, circleId: startCircle, existing
         <p className={`status-badge ${overdue ? "is-overdue" : ""}`}>
           {existing.state === "completed" ? "✓ Completed" : existing.state === "dismissed" ? "Dismissed" : overdue ? "! Overdue" : "Pending"}
         </p>
+      )}
+      {inRun && (
+        <fieldset className="field">
+          <legend>Apply changes to</legend>
+          <div className="segmented">
+            <button type="button" className={scope === "one" ? "is-active" : ""} aria-pressed={scope === "one"} onClick={() => setScope("one")}>This task</button>
+            <button type="button" className={scope === "series" ? "is-active" : ""} aria-pressed={scope === "series"} onClick={() => setScope("series")}>This and following</button>
+          </div>
+        </fieldset>
       )}
       <label className="field">
         <span>Task</span>
@@ -177,7 +210,14 @@ export default function TaskForm({ ctx, circles, circleId: startCircle, existing
         {notify && <p className="hint">Browser reminders can arrive a minute or so late. For time-critical tasks like Tatkal booking, set the notification a few minutes early.</p>}
       </fieldset>
       {!existing && <RepeatPicker value={rep} onChange={setRep} date={due} startTime="00:00" endTime="00:01" tz={tz} noun="task" />}
-      {existing?.series_id && <p className="hint">One of a repeating set of tasks. Changes here apply to this one only.</p>}
+      {inRun && scope === "series" && (
+        <RepeatPicker
+          value={rep} onChange={setRep} date={due} startTime="00:00" endTime="00:01" tz={tz} noun="task" neverLabel="Keep dates"
+          note={<span className="hint">{rep.freq
+            ? "Saving replaces this task and the later pending ones with this new run. Done and dismissed ones stay."
+            : "The title, time, sharing and notes also go to the later tasks still pending. Their dates and notifications stay as they are."}</span>}
+        />
+      )}
       <label className="field"><span>Notes <span className="muted">(optional)</span></span><textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} /></label>
 
       {error && <div className="alert alert-error" role="alert">{error}</div>}
