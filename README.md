@@ -20,7 +20,7 @@ tasks never block time, and reminder status is shown honestly per device.
 
 ## Setup (about 20 minutes)
 
-1. **Supabase.** Create a free project at supabase.com. In *SQL Editor*, run `supabase/migrations/0001_init.sql`, then `0002_appointment_outcome.sql`, `0003_custom_activity_place.sql`, `0004_custom_activity_refs.sql`, `0005_circles.sql`, `0006_sharing.sql`, `0007_activity.sql`, `0008_people.sql`, `0009_roles.sql`, `0010_grants.sql` and `0011_circle_gaps.sql` from the same folder, in that order.
+1. **Supabase.** Create a free project at supabase.com. In *SQL Editor*, run `supabase/migrations/0001_init.sql`, then `0002_appointment_outcome.sql`, `0003_custom_activity_place.sql`, `0004_custom_activity_refs.sql`, `0005_circles.sql`, `0006_sharing.sql`, `0007_activity.sql`, `0008_people.sql`, `0009_roles.sql`, `0010_grants.sql`, `0011_circle_gaps.sql` and `0012_invite_email.sql` from the same folder, in that order.
 2. **Sign-in.** In *Authentication → Providers*, email (magic link) is on by default. To add Google, enable the Google provider and paste a Google OAuth client ID/secret (Google Cloud Console → Credentials → OAuth client, redirect URI shown by Supabase). In *Authentication → URL Configuration*, set Site URL to your Vercel URL and add `https://YOUR-APP.vercel.app/**` (and `http://localhost:3000/**` for local dev) to Redirect URLs. The wildcard is needed because the password-reset link adds a query string to `/auth/callback`.
 3. **Push keys.** Run `npx web-push generate-vapid-keys`.
 4. **Vercel.** Import this repo at vercel.com/new and add the variables from `.env.example`. Deploy.
@@ -28,6 +28,13 @@ tasks never block time, and reminder status is shown honestly per device.
 6. Open the app, sign in, add an activity type (e.g. Cricket) and a place, then go to *Settings → Enable reminders* and press *Send test notification*.
 
 On iPhone/iPad: open the site in Safari → Share → *Add to Home Screen*, open it from the Home Screen, then enable reminders.
+
+## Invite emails (optional)
+
+Planner can email circle invites itself through a Gmail account. Turn on 2-Step Verification for that Google account,
+create an app password (*Google Account → Security → App passwords*), and set `GMAIL_USER` and `GMAIL_APP_PASSWORD`
+in Vercel and in `.env.local`. Without them, *Email it* opens your own mail app with the invite written out.
+An invite can be emailed once every two minutes, and an owner can send 20 a day.
 
 ## Local development
 
