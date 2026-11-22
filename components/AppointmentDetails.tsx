@@ -156,6 +156,14 @@ export default function AppointmentDetails({
         <dt><Icon d="M6 9.5a6 6 0 0 1 12 0c0 4.5 2 5.5 2 6.5H4c0-1 2-2 2-6.5zM10 19.5a2 2 0 0 0 4 0" /><span className="sr-only">Reminder</span></dt>
         <dd>{appt.status === "cancelled" ? <span className="muted">Reminder stopped (cancelled)</span> : appt.reminder_minutes === null ? <span className="muted">No reminder</span> : `Reminder ${reminderLabel.toLowerCase()}`}</dd>
         {appt.team && (<><dt><Icon d="M8.5 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 19a5.5 5.5 0 0 1 11 0M16 11a2.5 2.5 0 1 0 0-5M17 14.5a4.5 4.5 0 0 1 4 4.5" /><span className="sr-only">Team</span></dt><dd>{appt.team}</dd></>)}
+        {sharedIn && (appt.participants?.length ?? 0) > 0 && (
+          <>
+            <dt><Icon d="M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2.5 20a6.5 6.5 0 0 1 13 0M16.5 11a3 3 0 1 0 0-6M17.5 14.6a5.5 5.5 0 0 1 4 5.4" /><span className="sr-only">Going</span></dt>
+            <dd>
+              <span>Going: {[appt.user_id, ...appt.participants!.map((p) => p.user_id)].map((id) => (id === ctx.userId ? "you" : sharedIn.circle_members.find((m) => m.user_id === id)?.email.split("@")[0] ?? "a member")).join(", ")}</span>
+            </dd>
+          </>
+        )}
         {appt.series_id && (<><dt><Icon d="M17 3l3 3-3 3M20 6H9a5 5 0 0 0-5 5M7 21l-3-3 3-3M4 18h11a5 5 0 0 0 5-5" /><span className="sr-only">Repeats</span></dt><dd>Part of a weekly series</dd></>)}
         <dt><Icon d="M5 4h14v11l-5 5H5zM14 20v-5h5M8.5 9h7M8.5 12.5h4" /><span className="sr-only">Notes</span></dt>
         <dd>

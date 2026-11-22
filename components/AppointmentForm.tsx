@@ -8,7 +8,7 @@ import { ACTIVITY_COLORS, REMINDER_CHOICES } from "@/lib/types";
 import { ColorPicker } from "./ActivityTypesView";
 import Select from "./Select";
 import { findConflicts, isOverlapError } from "@/lib/conflicts";
-import type { Circle } from "@/lib/circles";
+import { seatsOf, type Circle } from "@/lib/circles";
 import { fmtRange, todayISO, toInterval } from "@/lib/time";
 import { expandWeekly, WEEKDAY_LABELS, MAX_OCCURRENCES } from "@/lib/recurrence";
 import { isGoogleMapsUrl } from "@/lib/maps";
@@ -48,6 +48,12 @@ export default function AppointmentForm({
   const [customPlace, setCustomPlace] = useState<string | null>(existing?.custom_place ?? null);
   // Shared with this circle, or "" for private. New ones start in the circle being viewed.
   const [circleId, setCircleId] = useState(existing ? existing.circle_id ?? "" : initial?.circleId ?? "");
+  // The other members going. The creator always is, and is not in this list.
+  const [going, setGoing] = useState<string[]>(existing?.participants?.map((p) => p.user_id) ?? []);
+  const others = seatsOf(circles.find((c) => c.id === circleId) ?? { id: "", name: "", owner_id: "", circle_members: [] }).filter((m) => m.user_id !== ctx.userId);
+  const share = (id: string) => { setCircleId(id); setGoing([]); }; // a different circle has different people
+  // When the people going are already busy in this slot. Times only: a private item never shows what it is.
+  const [busy, setBusy] = useState<{ user_id: string; starts_at: string; ends_at: string }[]>([]);
   const [date, setDate] = useState(exStart?.toISODate() ?? initial?.date ?? tomorrow);
   const [start, setStart] = useState(exStart?.toFormat("HH:mm") ?? initial?.start ?? `${pad(nextHour.hour)}:00`);
   const [end, setEnd] = useState(exEnd?.toFormat("HH:mm") ?? initial?.end ?? `${pad((nextHour.hour + 1) % 24)}:00`);
@@ -103,6 +109,23 @@ export default function AppointmentForm({
   }, [repeat]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const interval = useMemo(() => toInterval(date, start, end, tz), [date, start, end, tz]);
+
+  const goingKey = going.join(",");
+  useEffect(() => {
+    if (!ctx.people || !circleId || !going.length || !interval.valid) return setBusy([]);
+    let live = true;
+    supabase
+      .rpc("circle_busy", { p_circle: circleId, p_users: going, p_from: interval.start.toUTC().toISO(), p_to: interval.end.toUTC().toISO(), p_exclude: existing?.id ?? null })
+      .then(({ data }: { data: unknown }) => { if (live) setBusy((data as typeof busy | null) ?? []); });
+    return () => { live = false; };
+  }, [circleId, goingKey, interval]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // After the appointment itself is saved: record who is going, on one appointment or a run of a series.
+  async function saveGoing(target: { p_appt?: string; p_series?: string; p_from?: string }) {
+    if (!ctx.people) return;
+    const { error } = await supabase.rpc("set_participants", { p_appt: target.p_appt ?? null, p_series: target.p_series ?? null, p_from: target.p_from ?? null, p_users: circleId ? going : [] });
+    if (error) toast("error", `Saved, but couldn’t set who is going: ${error.message}`);
+  }
 
   function onStartChange(v: string) {
     // Keep the duration when the start moves.
@@ -188,6 +211,7 @@ export default function AppointmentForm({
     if (existing) {
       const { error } = await supabase.from("appointments").update(row).eq("id", existing.id);
       if (error) return handleDbError(error);
+      await saveGoing({ p_appt: existing.id });
       await refresh();
       toast("ok", "Appointment updated");
       onDone(date);
@@ -205,6 +229,7 @@ export default function AppointmentForm({
         }
         return handleDbError(error);
       }
+      await saveGoing({ p_appt: data.id });
       await refresh();
       toast("ok", "Appointment saved");
       onDone(date);
@@ -236,6 +261,7 @@ export default function AppointmentForm({
       occurrences: keep.map((k) => ({ starts_at: k.starts_at, ends_at: k.ends_at })),
     });
     if (error) return handleDbError(error);
+    await saveGoing({ p_series: data as string });
     await refresh();
     const skipped = rev.length - keep.length;
     toast("ok", `Saved ${keep.length} appointment${keep.length > 1 ? "s" : ""}${skipped ? `, skipped ${skipped}` : ""}`);
@@ -278,6 +304,7 @@ export default function AppointmentForm({
     }
     const { error: e2 } = await supabase.rpc("update_appointments_bulk", { changes, fields: fields() });
     if (e2) return handleDbError(e2);
+    await saveGoing({ p_series: existing.series_id!, p_from: existing.starts_at });
     await refresh();
     toast("ok", `Updated ${changes.length} appointment${changes.length > 1 ? "s" : ""} in the series`);
     onDone(date);
@@ -462,12 +489,33 @@ export default function AppointmentForm({
         <fieldset className="field">
           <legend>Share with</legend>
           <div className="chips chips-xs" style={{ marginTop: 0 }}>
-            <button type="button" className={`chip ${!circleId ? "is-selected" : ""}`} aria-pressed={!circleId} onClick={() => setCircleId("")}>Just me</button>
+            <button type="button" className={`chip ${!circleId ? "is-selected" : ""}`} aria-pressed={!circleId} onClick={() => share("")}>Just me</button>
             {circles.map((c) => (
-              <button type="button" key={c.id} className={`chip ${circleId === c.id ? "is-selected" : ""}`} aria-pressed={circleId === c.id} onClick={() => setCircleId(c.id)}>{c.name}</button>
+              <button type="button" key={c.id} className={`chip ${circleId === c.id ? "is-selected" : ""}`} aria-pressed={circleId === c.id} onClick={() => share(c.id)}>{c.name}</button>
             ))}
           </div>
           {circleId && <span className="hint">Everyone in {circles.find((c) => c.id === circleId)?.name} can see this. Only you can change it.</span>}
+        </fieldset>
+      )}
+
+      {ctx.people && circleId && others.length > 0 && (
+        <fieldset className="field">
+          <legend>Who is going</legend>
+          <div className="chips chips-xs" style={{ marginTop: 0 }}>
+            <span className="chip is-selected going-you">You</span>
+            {others.map((m) => {
+              const on = going.includes(m.user_id);
+              return (
+                <button type="button" key={m.user_id} className={`chip ${on ? "is-selected" : ""}`} aria-pressed={on} title={m.email} onClick={() => setGoing(on ? going.filter((x) => x !== m.user_id) : [...going, m.user_id])}>
+                  <span className={`who act-${m.color}`} aria-hidden>{m.letter}</span> {m.email.split("@")[0]}
+                </button>
+              );
+            })}
+          </div>
+          {busy.map((b) => (
+            <span key={b.user_id + b.starts_at} className="hint busy-note">{others.find((m) => m.user_id === b.user_id)?.email.split("@")[0] ?? "Someone"} is busy {fmtRange(b.starts_at, b.ends_at, tz)}.</span>
+          ))}
+          {going.length > 0 && <span className="hint">It shows in their calendar, and each gets a reminder by their own setting.</span>}
         </fieldset>
       )}
 

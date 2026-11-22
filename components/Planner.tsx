@@ -73,11 +73,14 @@ export default function Planner() {
   const [face, setFace] = useState<string | null>(null); // in a circle: show only this member's items
   const circle = circles.circles.find((c) => c.id === scope);
   const seats = useMemo(() => (circle ? seatsOf(circle) : []), [circle]);
-  const inScope = (x: { user_id: string; circle_id?: string | null }) =>
-    circle ? x.circle_id === circle.id && (!face || x.user_id === face) : x.user_id === ctx.userId;
+  // "Mine" is what I created, what I am going to, and what is assigned to me.
+  const isMine = (x: { user_id: string; participants?: { user_id: string }[]; assignee_id?: string | null }) =>
+    x.user_id === ctx.userId || !!x.participants?.some((p) => p.user_id === ctx.userId) || x.assignee_id === ctx.userId;
+  const inScope = (x: { user_id: string; circle_id?: string | null; participants?: { user_id: string }[]; assignee_id?: string | null }) =>
+    circle ? x.circle_id === circle.id && (!face || x.user_id === face) : isMine(x);
   // The calendar views read through this; everything else (forms, the Tasks page) keeps the full context.
   const viewCtx = { ...ctx, appointments: appointments.filter(inScope), tasks: tasks.filter(inScope) };
-  const myTasks = tasks.filter((t) => t.user_id === ctx.userId);
+  const myTasks = tasks.filter(isMine);
   // In a circle view each item carries its owner's initial and colour.
   const whoOf = (userId: string) => (circle ? seats.find((s) => s.user_id === userId) : undefined);
 
@@ -184,13 +187,21 @@ export default function Planner() {
     panelTitle = "Task";
     const theirs = t && t.user_id !== ctx.userId;
     const from = theirs ? circles.circles.find((c) => c.id === t.circle_id) : undefined;
-    // Someone else's shared task is read-only here.
+    const emailOf = (id?: string | null) => from?.circle_members.find((m) => m.user_id === id)?.email;
+    // The person it is for, or anyone when it is unassigned, may finish it.
+    const canFinish = !!t && ctx.people && t.state === "pending" && (!t.assignee_id || t.assignee_id === ctx.userId);
+    // Someone else's shared task: read-only here, apart from marking it done when it is yours to do.
     panelBody = !t ? null : theirs ? (
       <div className="stack">
         <h3>{t.title}</h3>
-        <p className="muted">Due {t.due_date}{t.due_time ? `, ${t.due_time.slice(0, 5)}` : ""}. {t.state === "pending" ? "Not done yet." : t.state === "completed" ? "Done." : "Dismissed."}</p>
+        <p className="muted">
+          Due {t.due_date}{t.due_time ? `, ${t.due_time.slice(0, 5)}` : ""}.{" "}
+          {t.state === "pending" ? "Not done yet." : t.state === "completed" ? `Done${t.completed_by ? ` by ${t.completed_by === ctx.userId ? "you" : emailOf(t.completed_by) ?? "a member"}` : ""}.` : "Dismissed."}
+        </p>
+        {ctx.people && <p>{t.assignee_id ? (t.assignee_id === ctx.userId ? "This one is for you." : `For ${emailOf(t.assignee_id) ?? "another member"}.`) : "For anyone in the circle."}</p>}
         {t.notes && <div className="note-block">{t.notes}</div>}
-        <p className="hint">Shared in {from?.name ?? "a circle"} by {from?.circle_members.find((m) => m.user_id === t.user_id)?.email ?? "another member"}. Only they can change it.</p>
+        {canFinish && <div><button className="btn btn-primary" onClick={async () => { await ctx.completeTask(t); closePanel(); }}>Mark done</button></div>}
+        <p className="hint">Shared in {from?.name ?? "a circle"} by {emailOf(t.user_id) ?? "another member"}. Only they can edit it.</p>
       </div>
     ) : <TaskForm ctx={ctx} circles={circles.circles} existing={t} onDone={closePanel} />;
   }

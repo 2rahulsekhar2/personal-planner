@@ -116,9 +116,11 @@ export default function AgendaView({
           {[...overdue, ...dayTasks.filter((t) => !overdue.includes(t))].map((t) => {
             const late = isTaskOverdue(t, tz);
             const done = t.state !== "pending";
+            // Mine, or a shared task that is for me or for anyone.
+            const canDo = t.user_id === ctx.userId || (ctx.people && !!t.circle_id && (!t.assignee_id || t.assignee_id === ctx.userId));
             return (
               <div key={t.id} className={`day-task ${late ? "is-overdue" : ""} ${done ? "is-done" : ""}`}>
-                <button className="day-task-check" disabled={done || t.user_id !== ctx.userId} aria-label={done ? "Done" : t.user_id !== ctx.userId ? "Only its owner can mark this done" : `Mark “${t.title}” done`} onClick={() => ctx.completeTask(t)}>
+                <button className="day-task-check" disabled={done || !canDo} aria-label={done ? "Done" : !canDo ? "Not yours to mark done" : `Mark “${t.title}” done`} onClick={() => ctx.completeTask(t)}>
                   {done && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>}
                 </button>
                 <button className="day-task-main" onClick={() => onOpenTask(t.id)}>

@@ -109,6 +109,9 @@ button.brand { display: inline-flex; align-items: center; gap: 8px; border: 0; b
 .scope-faces { display: flex; gap: 4px; margin-left: 6px; }
 .face { display: grid; place-items: center; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%; background: var(--a-bg); color: var(--a-ink); font-size: 11px; font-weight: 700; cursor: pointer; }
 .face.is-off { opacity: .35; }
+/* In the form: you are always going, so your chip is not a button. A busy note warns without blocking. */
+.going-you { cursor: default; }
+.busy-note { color: var(--warn); font-weight: 500; }
 /* On a shared item: the initial of the person it belongs to, in their colour. */
 .who { display: inline-grid; place-items: center; min-width: 14px; height: 14px; padding: 0 3px; border-radius: 7px; background: var(--a-bg); color: var(--a-ink); font-size: 9px; font-weight: 700; line-height: 1; flex-shrink: 0; }
 .agenda-appt .who, .day-task .who { min-width: 20px; height: 20px; border-radius: 10px; font-size: 11px; }
