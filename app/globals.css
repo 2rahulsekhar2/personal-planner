@@ -776,6 +776,28 @@ button.kit-token.is-act:hover { background: color-mix(in srgb, var(--a-bg) 34%, 
 .place-map:hover { background: var(--surface-2); color: var(--accent-text); }
 .kit-places .kit-add { padding: 14px; min-height: 96px; }
 
+/* Circles: the people as faces. A ring marks the owner, an eye a viewer, dashes someone only invited. */
+.circle-faces { padding-top: 12px; border-top: 1px solid var(--line); }
+.kit-face.is-owner { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); }
+.kit-face.is-pending { background: none; border: 1.5px dashed var(--line-2); color: var(--muted); }
+.kit-badge.is-viewer { display: grid; place-items: center; width: 18px; height: 18px; background: var(--surface-2); color: var(--ink-2); box-shadow: 0 0 0 2px var(--surface); }
+.circle-faces .kit-badge { box-shadow: 0 0 0 2px var(--surface); }
+/* The open face is marked by its backing, not a ring: a ring here means "owner". */
+.circle-faces .kit-token.is-open { background: var(--surface-2); }
+.circle-faces .kit-token.is-open .kit-face:not(.is-owner) { box-shadow: none; }
+/* History: a line down each day with a mark for each thing done. */
+.hist-filters { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.hist-filters .scope-faces { margin: 0; flex-wrap: wrap; }
+.hist-day { display: flex; flex-direction: column; gap: 6px; }
+.hist { list-style: none; margin: 0 0 0 14px; padding: 2px 0; border-left: 1px solid var(--line-2); display: flex; flex-direction: column; }
+.hist li { position: relative; display: flex; align-items: flex-start; gap: 10px; padding: 7px 0 7px 26px; }
+.hist-mark { position: absolute; left: -14px; top: 5px; display: grid; place-items: center; width: 27px; height: 27px; border-radius: 50%; background: var(--surface-2); color: var(--ink-2); box-shadow: 0 0 0 3px var(--bg); }
+.hist-mark.is-good { background: var(--ok-soft); color: var(--ok); }
+.hist-mark.is-gone { background: var(--danger-soft); color: var(--danger); }
+.hist-what { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
+.hist-count { margin-left: 6px; padding: 0 6px; border-radius: 8px; background: var(--surface-2); font-size: 12px; font-weight: 600; }
+.hist-time { flex-shrink: 0; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; padding-top: 2px; }
+
 /* Shared budget: the circle's faces, its name, and one switch. */
 .kit-plans { flex-direction: column; }
 .kit-plans > .kit-plan { align-items: center; gap: 12px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow); }

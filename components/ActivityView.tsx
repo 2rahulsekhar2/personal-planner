@@ -2,9 +2,21 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { DateTime } from "luxon";
 import type { PlannerCtx } from "./usePlanner";
-import type { Circle } from "@/lib/circles";
+import { seatsOf, type Circle } from "@/lib/circles";
 import { collapseActivity, describeActivity, type ActivityEntry } from "@/lib/activity";
 import { fmtTime, relativeDayLabel } from "@/lib/time";
+
+const svg = (d: string) => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={d} /></svg>;
+// What kind of thing an entry is about, as a picture.
+const KIND_ICON = {
+  appointment: svg("M4 6.5h16v13H4zM8 3.5v5M16 3.5v5M4 11h16"),
+  task: svg("M5 12.5l4.5 4.5L19 7.5"),
+  circle: svg("M9 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7zM2.5 20a6.5 6.5 0 0 1 13 0M17 11a3 3 0 1 0 0-6M18 14.6a5.5 5.5 0 0 1 3.5 5.4"),
+};
+// How it ended: something gained or finished, something taken away, or a plain change.
+const toneOf = (action: string) =>
+  ["added", "created", "joined", "shared", "done", "completed"].includes(action) ? "good"
+    : ["deleted", "cancelled", "dismissed", "removed", "left", "unshared", "not_done"].includes(action) ? "gone" : "plain";
 
 // shortcut: shows the newest 200 entries for the chosen filters, add paging when someone needs to look further back
 const LIMIT = 200;
@@ -71,48 +83,57 @@ export default function ActivityView({ ctx, circles }: { ctx: PlannerCtx; circle
   }, [rows, tz]);
 
   const circleName = (id: string | null) => circles.find((c) => c.id === id)?.name;
+  // A person keeps the colour of their seat in a circle; someone in none of mine gets the plain one.
+  const colorOf = useMemo(() => new Map(circles.flatMap((c) => seatsOf(c).map((m) => [m.user_id, m.color] as const))), [circles]);
 
   return (
     <div className="page">
-      <div className="page-head">
-        <h1>Activity</h1>
-      </div>
-      <p className="hint">What you have done, and what members have done with items shared in your circles. Private items of other people never show here.</p>
+      <div className="page-head"><h1>History</h1></div>
 
-      <div className="row">
-        <div className="chips grow" role="group" aria-label="Filter by circle">
-          <button className={`chip chip-sm ${!circleId ? "is-selected" : ""}`} aria-pressed={!circleId} onClick={() => pickCircle(null)}>All activity</button>
+      <div className="hist-filters">
+        <div className="chips" role="group" aria-label="Filter by circle">
+          <button className={`chip chip-sm ${!circleId ? "is-selected" : ""}`} aria-pressed={!circleId} onClick={() => pickCircle(null)}>All</button>
           {circles.map((c) => (
             <button key={c.id} className={`chip chip-sm ${circleId === c.id ? "is-selected" : ""}`} aria-pressed={circleId === c.id} onClick={() => pickCircle(c.id)}>{c.name}</button>
           ))}
         </div>
-        <select aria-label="Filter by person" value={person} onChange={(e) => setPerson(e.target.value)}>
-          <option value="">Everyone</option>
-          {people.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-        </select>
+        {/* Who: a face each. Press one to see only that person, press it again for everyone. */}
+        {people.length > 1 && (
+          <div className="scope-faces" role="group" aria-label="Filter by person">
+            {people.map((p) => (
+              <button key={p.id} className={`face act-${colorOf.get(p.id) ?? "slate"} ${person && person !== p.id ? "is-off" : ""}`} aria-pressed={person === p.id} aria-label={`Only ${p.label}`} title={p.label} onClick={() => setPerson(person === p.id ? "" : p.id)}>
+                {(p.id === userId ? email ?? "Y" : p.label)[0].toUpperCase()}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
-      {missing && <div className="alert alert-warn">Activity needs a one-time database update: run supabase/migrations/0007_activity.sql in the Supabase SQL editor, then reload.</div>}
-      {error && !missing && <div className="alert alert-error" role="alert">Couldn’t load activity: {error}. <button className="link" onClick={load}>Retry</button></div>}
+      {missing && <div className="alert alert-warn">History needs a one-time database update: run supabase/migrations/0007_activity.sql in the Supabase SQL editor, then reload.</div>}
+      {error && !missing && <div className="alert alert-error" role="alert">Couldn’t load history: {error}. <button className="link" onClick={load}>Retry</button></div>}
 
       {days.map((d) => (
-        <section key={d.date}>
-          <h2 className="section-title">{relativeDayLabel(d.date, tz)}</h2>
-          <ul className="card list">
+        <section key={d.date} className="hist-day">
+          <h2>{relativeDayLabel(d.date, tz)}</h2>
+          {/* A line down the day, a mark for each thing done: its picture says what kind, its colour how it ended. */}
+          <ol className="hist">
             {d.items.map((e) => (
-              <li key={e.id} className="list-row">
-                <span className="avatar avatar-sm" aria-hidden>{(e.user_id === userId ? email ?? e.email : e.email)[0].toUpperCase()}</span>
-                <span className="grow circle-who">
-                  <span>{describeActivity(e, userId)}{e.count > 1 ? ` (${e.count} times)` : ""}</span>
-                  <span className="muted">{fmtTime(e.created_at, tz)}{circleName(e.circle_id) ? ` · ${circleName(e.circle_id)}` : ""}</span>
+              <li key={e.id}>
+                <span className={`hist-mark is-${toneOf(e.action)}`} aria-hidden>{KIND_ICON[e.kind]}</span>
+                <span className="grow hist-what">
+                  <span><strong>{e.user_id === userId ? "You" : e.email.split("@")[0]}</strong> {describeActivity(e, userId).replace(/^\S+ /, "")}{e.count > 1 && <span className="hist-count">×{e.count}</span>}</span>
+                  {/* An entry about a circle already names it. */}
+                  {e.kind !== "circle" && circleName(e.circle_id) && <span className="kit-sub">{circleName(e.circle_id)}</span>}
                 </span>
+                <span className="hist-time">{fmtTime(e.created_at, tz)}</span>
               </li>
             ))}
-          </ul>
+          </ol>
         </section>
       ))}
       {rows && !error && rows.length === 0 && <p className="empty">Nothing here yet.</p>}
-      {rows?.length === LIMIT && <p className="hint">Showing the latest {LIMIT} entries. Use the filters to narrow down.</p>}
+      {rows?.length === LIMIT && <p className="hint">Showing the latest {LIMIT}. Filter to narrow down.</p>}
+      {rows && rows.length > 0 && <p className="hint">Other people’s private items never show here.</p>}
     </div>
   );
 }

@@ -28,6 +28,8 @@ export default function CirclesView({ ctx, state, linkToken, clearLink }: { ctx:
   const [draft, setDraft] = useState<{ circle: string; email: string; role: "member" | "viewer"; days: number } | null>(null);
   const [confirm, setConfirm] = useState<string | null>(null); // key of the action waiting for a second press
   const [link, setLink] = useState<LinkInvite | null | "gone">(null);
+  // The face that is open for managing: a member's user id or an invite's id, within one circle.
+  const [open, setOpen] = useState<{ circle: string; key: string } | null>(null);
 
   useEffect(() => {
     if (!linkToken) return setLink(null);
@@ -174,52 +176,101 @@ export default function CirclesView({ ctx, state, linkToken, clearLink }: { ctx:
               {members.length === 1 ? "Just you so far" : `${members.length} members`}
               {sent.length > 0 && `, ${sent.length} invited`}
             </p>
-            {owner && !d && <button className="btn btn-sm" onClick={() => setDraft({ circle: c.id, email: "", role: "member", days: 0 })}>Invite someone</button>}
           </div>
         </div>
 
-        <ul className="list circle-people">
-          {members.map((m) => (
-            <li key={m.user_id} className="list-row">
-              <span className={`avatar avatar-sm act-${m.color}`} aria-hidden>{m.letter}</span>
-              <span className="grow circle-who">
-                <span className="circle-email">{m.email}</span>
-                <span className="muted">{ROLE_LABEL[m.role]}{accessNote(m)}{m.user_id === userId ? ", you" : ""}</span>
-              </span>
-              {owner && m.user_id !== userId && (
-                <span className="row-actions">
-                  {roles && <button className="btn btn-sm btn-ghost" disabled={busy} onClick={() => run("update_circle_member", { p_circle: c.id, p_user: m.user_id, p_role: m.role === "viewer" ? "member" : "viewer", p_until: m.expires_at ?? null }, `${m.email} is now a ${m.role === "viewer" ? "member" : "viewer"}`)}>{m.role === "viewer" ? "Make member" : "Make viewer"}</button>}
-                  {roles && (
-                    <input
-                      type="date" className="input-inline" aria-label={`Date ${m.email}'s access ends`} title="Access ends on"
-                      value={m.expires_at ? localDay(m.expires_at) : ""} min={localDay(new Date().toISOString())} disabled={busy}
-                      onChange={(e) => run("update_circle_member", { p_circle: c.id, p_user: m.user_id, p_role: m.role, p_until: e.target.value ? endOfDay(e.target.value) : null }, e.target.value ? `${m.email} stays until ${dayLabel(endOfDay(e.target.value))}` : `${m.email} stays for good`)}
-                    />
-                  )}
-                  {roles && m.expires_at && <button className="btn btn-sm btn-ghost" disabled={busy} onClick={() => run("update_circle_member", { p_circle: c.id, p_user: m.user_id, p_role: m.role, p_until: null }, `${m.email} stays for good`)}>Keep for good</button>}
-                  {sure(`own:${c.id}:${m.user_id}`, "Make owner", "Hand over", () => run("transfer_circle", { p_circle: c.id, p_user: m.user_id }, `${m.email} now owns ${c.name}`))}
-                  {sure(`rm:${c.id}:${m.user_id}`, "Remove", "Remove", () => run("remove_circle_member", { p_circle: c.id, p_user: m.user_id }, `${m.email} removed`))}
-                </span>
-              )}
+        {/* Everyone as a face. The owner presses one to manage that person; the dashed face invites someone new. */}
+        <ul className="kit-row kit-faces circle-faces">
+          {members.map((m) => {
+            const can = owner && m.user_id !== userId;
+            const on = open?.circle === c.id && open.key === m.user_id;
+            const inner = (
+              <>
+                <span className={`kit-face ${m.role === "owner" ? "is-owner" : ""}`}>{m.letter}{m.role === "viewer" && <span className="kit-badge is-viewer" title="Viewer"><svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M2 12s3.6-6.5 10-6.5S22 12 22 12s-3.6 6.5-10 6.5S2 12 2 12z" /><circle cx="12" cy="12" r="2.5" /></svg></span>}</span>
+                <span className="kit-name">{m.user_id === userId ? "You" : m.email.split("@")[0]}</span>
+                <span className="kit-sub">{ROLE_LABEL[m.role]}{accessNote(m)}</span>
+              </>
+            );
+            return (
+              <li key={m.user_id}>
+                {can
+                  ? <button className={`kit-token act-${m.color} ${on ? "is-open" : ""}`} title={m.email} aria-expanded={on} aria-label={`Manage ${m.email}, ${ROLE_LABEL[m.role]}`} onClick={() => { setOpen(on ? null : { circle: c.id, key: m.user_id }); setConfirm(null); }}>{inner}</button>
+                  : <span className={`kit-token act-${m.color}`} title={m.email}>{inner}</span>}
+              </li>
+            );
+          })}
+          {sent.map((i) => {
+            const on = open?.circle === c.id && open.key === i.id;
+            const inner = (
+              <>
+                <span className="kit-face is-pending">{i.email?.[0].toUpperCase() ?? "?"}</span>
+                <span className="kit-name">{i.email ? i.email.split("@")[0] : "Link"}</span>
+                <span className="kit-sub">Invited</span>
+              </>
+            );
+            return (
+              <li key={i.id}>
+                {owner
+                  ? <button className={`kit-token ${on ? "is-open" : ""}`} title={i.email ?? "Invite link"} aria-expanded={on} aria-label={`Manage the invite for ${i.email ?? "a link"}`} onClick={() => setOpen(on ? null : { circle: c.id, key: i.id })}>{inner}</button>
+                  : <span className="kit-token" title={i.email ?? "Invite link"}>{inner}</span>}
+              </li>
+            );
+          })}
+          {owner && (
+            <li>
+              <button className={`kit-token kit-add ${d ? "is-open" : ""}`} aria-expanded={!!d} onClick={() => { setOpen(null); setDraft(d ? null : { circle: c.id, email: "", role: "member", days: 0 }); }}>
+                <span className="kit-add-mark"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg></span>
+                <span className="kit-add-text">Invite</span>
+              </button>
             </li>
-          ))}
-          {sent.map((i) => (
-            <li key={i.id} className="list-row">
-              <span className="avatar avatar-sm avatar-pending" aria-hidden>?</span>
-              <span className="grow circle-who">
-                <span className="circle-email">{i.email ?? "Invite link"}</span>
-                <span className="muted">Invited{i.access_days ? `, to stay ${i.access_days === 1 ? "1 day" : `${i.access_days} days`}` : ""}. {expiryLabel(i.expires_at)}</span>
-              </span>
-              {owner && (
-                <span className="row-actions">
-                  {i.email && <button className="btn btn-sm btn-ghost" disabled={busy} onClick={() => emailInvite(i.token, i.email!, c.name, i.expires_at)}>Email it</button>}
-                  <button className="btn btn-sm btn-ghost" onClick={() => copy(i.token)}>Copy link</button>
-                  <button className="btn btn-sm btn-ghost" disabled={busy} onClick={() => run("revoke_invite", { p_invite: i.id }, "Invite withdrawn")}>Withdraw</button>
-                </span>
-              )}
-            </li>
-          ))}
+          )}
         </ul>
+
+        {/* The open face's controls. */}
+        {owner && open?.circle === c.id && members.filter((m) => m.user_id === open.key).map((m) => (
+          <div key={m.user_id} className="seat-form">
+            <strong className="circle-email">{m.email}</strong>
+            {roles && (
+              <div className="row seat-role">
+                <span className="muted">Role</span>
+                <span className="chips chips-xs" role="group" aria-label="Role">
+                  {(["member", "viewer"] as const).map((r) => (
+                    <button key={r} type="button" className={`chip ${m.role === r ? "is-selected" : ""}`} aria-pressed={m.role === r} disabled={busy || m.role === r}
+                      onClick={() => run("update_circle_member", { p_circle: c.id, p_user: m.user_id, p_role: r, p_until: m.expires_at ?? null }, `${m.email} is now a ${r}`)}>{ROLE_LABEL[r]}</button>
+                  ))}
+                </span>
+              </div>
+            )}
+            {roles && (
+              <div className="row seat-role">
+                <span className="muted">Stays until</span>
+                <input
+                  type="date" className="input-inline" aria-label={`Date ${m.email}'s access ends`}
+                  value={m.expires_at ? localDay(m.expires_at) : ""} min={localDay(new Date().toISOString())} disabled={busy}
+                  onChange={(e) => run("update_circle_member", { p_circle: c.id, p_user: m.user_id, p_role: m.role, p_until: e.target.value ? endOfDay(e.target.value) : null }, e.target.value ? `${m.email} stays until ${dayLabel(endOfDay(e.target.value))}` : `${m.email} stays for good`)}
+                />
+                {m.expires_at
+                  ? <button className="btn btn-sm btn-ghost" disabled={busy} onClick={() => run("update_circle_member", { p_circle: c.id, p_user: m.user_id, p_role: m.role, p_until: null }, `${m.email} stays for good`)}>For good</button>
+                  : <span className="muted">no end</span>}
+              </div>
+            )}
+            <div className="row">
+              {sure(`own:${c.id}:${m.user_id}`, "Make owner", "Hand over", () => run("transfer_circle", { p_circle: c.id, p_user: m.user_id }, `${m.email} now owns ${c.name}`))}
+              {sure(`rm:${c.id}:${m.user_id}`, "Remove", "Remove", async () => { if (await run("remove_circle_member", { p_circle: c.id, p_user: m.user_id }, `${m.email} removed`)) setOpen(null); })}
+            </div>
+          </div>
+        ))}
+        {owner && open?.circle === c.id && sent.filter((i) => i.id === open.key).map((i) => (
+          <div key={i.id} className="seat-form">
+            <strong className="circle-email">{i.email ?? "Invite link"}</strong>
+            <span className="muted">{expiryLabel(i.expires_at)}{i.access_days ? `, then stays ${i.access_days === 1 ? "1 day" : `${i.access_days} days`}` : ""}</span>
+            <div className="row">
+              {i.email && <button className="btn btn-sm" disabled={busy} onClick={() => emailInvite(i.token, i.email!, c.name, i.expires_at)}>Email it</button>}
+              <button className="btn btn-sm" onClick={() => copy(i.token)}>Copy link</button>
+              <button className="btn btn-sm btn-ghost btn-danger" disabled={busy} onClick={async () => { if (await run("revoke_invite", { p_invite: i.id }, "Invite withdrawn")) setOpen(null); }}>Withdraw</button>
+            </div>
+          </div>
+        ))}
 
         {/* Adding a seat: while this is open, the new seat previews on the ring above. */}
         {owner && d && (
@@ -249,7 +300,7 @@ export default function CirclesView({ ctx, state, linkToken, clearLink }: { ctx:
               <button type="button" className="btn" disabled={busy} onClick={() => invite(c.id, "", d.role, d.days)}>Copy a one-time link</button>
               <button type="button" className="btn btn-ghost" onClick={() => setDraft(null)}>Cancel</button>
             </div>
-            <p className="hint">They get the invite by email where email is set up; otherwise press Email it or share the link. They also see it when they sign in with this address. A link works for whoever opens it first. A viewer can look, but cannot add, be given tasks, or finish them.</p>
+            <p className="hint">A link works for whoever opens it first. A viewer can look, not add.</p>
           </form>
         )}
 
@@ -268,7 +319,6 @@ export default function CirclesView({ ctx, state, linkToken, clearLink }: { ctx:
         <h1>Circles</h1>
         {newName === null && !missing && <button className="btn btn-primary" onClick={() => setNewName("")}>New circle</button>}
       </div>
-      <p className="hint">A circle is a group you plan with: your family, a team, friends. Joining one shares nothing by itself.</p>
 
       {missing && <div className="alert alert-warn">Circles need a one-time database update: run supabase/migrations/0005_circles.sql in the Supabase SQL editor, then reload.</div>}
       {error && <div className="alert alert-error" role="alert">Couldn’t load circles: {error}. <button className="link" onClick={reload}>Retry</button></div>}
@@ -294,7 +344,7 @@ export default function CirclesView({ ctx, state, linkToken, clearLink }: { ctx:
       )}
 
       {circles.map(circleCard)}
-      {ready && !missing && !error && circles.length === 0 && newName === null && <p className="empty">No circles yet. Create one, then invite the people you plan with.</p>}
+      {ready && !missing && !error && circles.length === 0 && newName === null && <p className="empty">No circles yet. A circle is a group you plan with: family, a team, friends. Joining one shares nothing by itself.</p>}
     </div>
   );
 }
