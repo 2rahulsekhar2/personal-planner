@@ -1,8 +1,9 @@
 "use client";
 import { DateTime } from "luxon";
 import type { PlannerCtx } from "./usePlanner";
-import { fmtRange, isTaskOverdue, relativeDayLabel, weekFromToday, todayISO } from "@/lib/time";
+import { fmtRange, fmtShortTime, isTaskOverdue, relativeDayLabel, weekFromToday, todayISO } from "@/lib/time";
 import { TaskChip, visibleAppointments } from "./WeekView";
+import DayBar from "./DayBar";
 
 export default function WeekSidebar({
   ctx, day, setDay, onOpen, onOpenTask,
@@ -62,19 +63,21 @@ export default function WeekSidebar({
           <h2>{relativeDayLabel(day, tz)}</h2>
           <span className="muted">{d.toFormat("ccc, d LLL")}</span>
         </div>
+        {/* The chosen day at a glance, then each appointment by its start. */}
+        <DayBar appts={appts} typeById={typeById} day={day} tz={tz} />
         {appts.length === 0 && <p className="empty">Nothing booked.</p>}
         {appts.map((a) => (
-          <button key={a.id} className={`side-row act-${typeById.get(a.activity_type_id ?? "")?.color ?? "slate"}`} onClick={() => onOpen(a.id)}>
+          <button key={a.id} className={`side-row act-${typeById.get(a.activity_type_id ?? "")?.color ?? "slate"}`} title={fmtRange(a.starts_at, a.ends_at, tz)} onClick={() => onOpen(a.id)}>
+            <span className="side-time">{fmtShortTime(a.starts_at, tz)}</span>
             <span className="swatch" aria-hidden />
-            <span className="grow">{a.title}</span>
-            <span className="muted">{fmtRange(a.starts_at, a.ends_at, tz)}</span>
+            <span className="grow side-what">{a.title}</span>
           </button>
         ))}
       </section>
 
       {dayTasks.length > 0 && (
         <section className="card">
-          <div className="side-head"><h2>Tasks</h2></div>
+          <div className="side-head"><h2>Tasks</h2><span className="bank-dots" role="img" aria-label={`${dayTasks.length} to do`}>{dayTasks.map((t) => <i key={t.id} className={isTaskOverdue(t, tz) ? "is-late" : ""} />)}</span></div>
           <div className="task-list-inline">
             {dayTasks.map((t) => <TaskChip key={t.id} task={t} tz={tz} onOpen={() => onOpenTask(t.id)} />)}
           </div>

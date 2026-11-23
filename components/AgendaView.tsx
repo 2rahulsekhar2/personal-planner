@@ -5,6 +5,7 @@ import SlotMenu, { type Slot } from "./SlotMenu";
 import type { PlannerCtx } from "./usePlanner";
 import { fmtClock, fmtRange, relativeDayLabel, weekFromToday, todayISO, isTaskOverdue, fmtShortTime } from "@/lib/time";
 import { visibleAppointments } from "./WeekView";
+import DayBar from "./DayBar";
 import { expected, inr, type Line } from "@/lib/money";
 
 const PIN = <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z" /><circle cx="12" cy="10" r="2.3" /></svg>;
@@ -76,17 +77,6 @@ export default function AgendaView({
   // With no gap left to press (a full day, or late evening today), one row still offers to add something.
   const spare = (day === today ? DateTime.now().setZone(tz) : dayStart.set({ hour: 9 })).startOf("minute");
 
-  // The day drawn as one bar, 6 AM to 10 PM: each appointment a block in its activity's colour, the rest free.
-  const barFrom = dayStart.set({ hour: 6 });
-  const barSpan = 16 * 60;
-  const at = (d: DateTime) => Math.max(0, Math.min(100, (d.diff(barFrom, "minutes").minutes / barSpan) * 100));
-  const blocks = active.map((a) => {
-    const from = at(DateTime.fromISO(a.starts_at).setZone(tz));
-    const to = at(DateTime.fromISO(a.ends_at).setZone(tz));
-    return { id: a.id, left: from, width: to - from, color: typeById.get(a.activity_type_id ?? "")?.color ?? "slate", tentative: a.status === "tentative" };
-  }).filter((b) => b.width > 0);
-  const nowAt = day === today ? at(DateTime.now().setZone(tz)) : null;
-  const freeMinutes = gaps.reduce((sum, g) => sum + g.to.diff(g.from, "minutes").minutes, 0);
   const allTasks = [...overdue, ...dayTasks.filter((t) => !overdue.includes(t))];
 
   type Row = { at: string; node: React.ReactNode };
@@ -160,14 +150,7 @@ export default function AgendaView({
         {relativeDayLabel(day, tz)} <span className="muted">{d.toFormat("cccc, d LLLL")}</span>
       </h1>
 
-      <div className="day-bar-wrap">
-        <div className="day-bar" role="img" aria-label={`${active.length} ${active.length === 1 ? "appointment" : "appointments"} between 6 AM and 10 PM${freeMinutes ? `, ${lengthOf(dayStart, dayStart.plus({ minutes: freeMinutes }))} free` : ""}`}>
-          {blocks.map((b) => <span key={b.id} className={`day-bar-block act-${b.color} ${b.tentative ? "is-tentative" : ""}`} style={{ left: `${b.left}%`, width: `${b.width}%` }} />)}
-          {nowAt !== null && nowAt > 0 && nowAt < 100 && <span className="day-bar-now" style={{ left: `${nowAt}%` }} />}
-        </div>
-        {/* Every third hour, each label under its own place on the bar. */}
-        <div className="day-bar-hours" aria-hidden>{[6, 9, 12, 15, 18, 21].map((h) => <span key={h} style={{ left: `${((h - 6) / 16) * 100}%` }}>{h > 12 ? h - 12 : h}</span>)}</div>
-      </div>
+      <DayBar appts={active} typeById={typeById} day={day} tz={tz} />
 
       {/* Tasks are plain rows: tap the circle to finish one, tap the row to open it. Overdue ones lead, in red. */}
       {allTasks.length > 0 && (
