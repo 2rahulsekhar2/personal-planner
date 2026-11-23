@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { amountOn, bankPosition, waitingOn, datesInMonth, monthLines, parseAmount, shiftMonth, totals, type MoneyEntry, type MoneyItem } from "@/lib/money";
+import { amountOn, bankPosition, byPerson, byType, forecast, linesDueOn, waitingOn, datesInMonth, monthLines, parseAmount, shiftMonth, totals, type MoneyEntry, type MoneyItem } from "@/lib/money";
 
 const item = (over: Partial<MoneyItem>): MoneyItem => ({
   id: "i1", kind: "expense", name: "Wifi bill", amount: 1000, freq: "monthly", start_date: "2026-01-15", end_date: null,
@@ -99,5 +99,40 @@ describe("approvals", () => {
   it("stops waiting for those who approved this request", () => {
     expect(waitingOn(p, members, [{ proposal_id: "p1", user_id: "owner" }, { proposal_id: "p2", user_id: "other" }])).toEqual(["other"]);
     expect(waitingOn(p, members, [{ proposal_id: "p1", user_id: "owner" }, { proposal_id: "p1", user_id: "other" }])).toEqual([]);
+  });
+});
+
+describe("insights", () => {
+  const items = [
+    item({ id: "wifi", amount: 1200, person_ids: ["a", "b", "c"], type_id: "home" }),
+    item({ id: "school", name: "School", amount: 5000, person_ids: ["c"], type_id: "kids", start_date: "2026-01-10" }),
+    item({ id: "tax", name: "Tax", amount: 300, type_id: "home", freq: "once", start_date: "2026-11-20" }),
+    item({ id: "milk", name: "Milk", amount: 50, freq: "daily", start_date: "2026-01-01" }),
+    item({ id: "emi", name: "EMI", amount: 10000, increase_id: "up", start_date: "2026-02-05" }),
+    item({ id: "pay", name: "Salary", kind: "income", amount: 60000, start_date: "2026-01-01" }),
+  ];
+  const entries: MoneyEntry[] = [{ item_id: "school", month: "2026-11-01", budget: null, actual: 5600, paid_at: "2026-11-10T00:00:00Z", skipped: false }];
+  const up = [{ id: "up", name: "Step-up", percent: 10, archived_at: null }];
+  const lines = monthLines(items, entries, up, "2026-11");
+
+  it("splits each expense equally between the people it is for", () => {
+    // Wifi 1200 / 3 = 400 each. School, at its actual 5600, is all c's. Tax, milk and the EMI are for nobody in particular.
+    expect(byPerson(lines)).toEqual([{ id: null, amount: 11800 }, { id: "c", amount: 6000 }, { id: "a", amount: 400 }, { id: "b", amount: 400 }]);
+  });
+  it("sums budget and actual for each type", () => {
+    expect(byType(lines).find((t) => t.id === "kids")).toEqual({ id: "kids", budget: 5000, actual: 5600, due: 0 });
+    expect(byType(lines).find((t) => t.id === "home")).toEqual({ id: "home", budget: 1500, actual: 0, due: 1500 });
+  });
+  it("lists what falls due on a day, leaving out daily items", () => {
+    expect(linesDueOn(lines, "2026-11-20").map((l) => l.item.id)).toEqual(["tax"]);
+    expect(linesDueOn(lines, "2026-11-15").map((l) => l.item.id)).toEqual(["wifi"]);
+    expect(linesDueOn(lines, "2026-11-02")).toEqual([]);
+  });
+  it("forecasts the months ahead, with the yearly increase from its anniversary", () => {
+    const f = forecast(items, entries, up, "2026-12", 3);
+    expect(f.map((m) => m.ym)).toEqual(["2026-12", "2027-01", "2027-02"]);
+    // December: wifi 1200 + school 5000 + milk 31 x 50 + EMI 10000. February 2027: 28 days of milk, and the EMI is 11000.
+    expect(f[0]).toEqual({ ym: "2026-12", income: 60000, expense: 17750, left: 42250 });
+    expect(f[2].expense).toBe(1200 + 5000 + 28 * 50 + 11000);
   });
 });

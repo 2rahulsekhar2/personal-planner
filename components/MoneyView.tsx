@@ -6,11 +6,11 @@ import type { MoneyCtx } from "./useMoney";
 import Panel from "./Panel";
 import MoneySetup from "./MoneySetup";
 import { MoneyItemForm, MoneyLineForm } from "./MoneyItemForm";
-import { bankPosition, expected, FREQ_LABELS, inr, monthLabel, monthLines, shiftMonth, totals, waitingOn, type Line, type MoneyKind, type Proposal } from "@/lib/money";
+import { bankPosition, byPerson, byType, expected, forecast, FREQ_LABELS, inr, monthLabel, monthLines, shiftMonth, totals, waitingOn, type Line, type MoneyKind, type Proposal } from "@/lib/money";
 import { canAdd, isCurrent, type Circle } from "@/lib/circles";
 import { todayISO } from "@/lib/time";
 
-type Tab = "month" | "banks" | "setup";
+type Tab = "month" | "banks" | "insights" | "setup";
 // `again`: a rejected request, opened to be changed and sent once more.
 type PanelState = { kind: "item"; id?: string; as?: MoneyKind; again?: Proposal } | { kind: "line"; id: string } | null;
 
@@ -93,6 +93,89 @@ function Lines({ lines, meta, onToggle, onOpen, empty, locked }: { lines: Line[]
         );
       })}
     </ul>
+  );
+}
+
+/** A labelled amount with a bar: its length is the amount's share of the largest in the list. */
+function Bar({ label, amount, of, note, tone }: { label: string; amount: number; of: number; note?: string; tone?: "short" }) {
+  return (
+    <li className={`money-bar ${tone === "short" ? "is-short" : ""}`}>
+      <span className="money-bar-head"><span>{label}</span><span><strong>{inr(amount)}</strong>{note && <span className="muted"> {note}</span>}</span></span>
+      <span className="money-bar-track" aria-hidden><span style={{ width: `${of > 0 ? Math.max(2, Math.round((Math.abs(amount) / of) * 100)) : 0}%` }} /></span>
+    </li>
+  );
+}
+
+/** What the budget in view says: who the month's money goes on, where it goes, which bank runs short, and the year ahead. */
+function Insights({ lines, view, ym }: { lines: Line[]; view: MoneyCtx; ym: string }) {
+  const people = byPerson(lines);
+  const types = byType(lines);
+  const spend = totals(lines, "expense");
+  const total = people.reduce((s, p) => s + p.amount, 0);
+  const personName = new Map(view.people.map((p) => [p.id, p.name]));
+  const typeName = new Map(view.types.map((t) => [t.id, t.name]));
+  const banks = view.banks.filter((b) => !b.archived_at).map((b) => ({ b, pos: bankPosition(b, lines) }));
+  const ahead = forecast(view.items, view.entries, view.increases, ym);
+  const peak = Math.max(...ahead.map((m) => Math.max(m.income, m.expense)), 1);
+  const year = ahead.reduce((s, m) => s + m.left, 0);
+  const worst = ahead.filter((m) => m.left < 0);
+  if (!view.items.length) return <p className="empty card">Nothing to show yet. Add an income or an expense first.</p>;
+
+  return (
+    <>
+      <section className="card stack">
+        <div className="page-head"><h2>Spent on each person</h2><span className="muted">{inr(total)} in {monthLabel(ym)}</span></div>
+        {people.length === 0 ? <p className="empty">No expenses in {monthLabel(ym)}.</p> : (
+          <ul className="money-bars">
+            {people.map((p) => <Bar key={p.id ?? "none"} label={p.id ? personName.get(p.id) ?? "Someone removed" : "Nobody in particular"} amount={p.amount} of={people[0].amount} note={total > 0 ? `${Math.round((p.amount / total) * 100)}%` : undefined} />)}
+          </ul>
+        )}
+        <p className="hint">An expense for several people is split equally between them. Choose who an expense is for when you add or edit it.</p>
+      </section>
+
+      <section className="card stack">
+        <div className="page-head"><h2>Where it goes</h2><span className="muted">{inr(spend.actual)} paid of {inr(spend.budget)}</span></div>
+        {types.length === 0 ? <p className="empty">No expenses in {monthLabel(ym)}.</p> : (
+          <ul className="money-bars">
+            {types.map((t) => {
+              const over = t.actual + t.due - t.budget; // what the month will come to, against its budget
+              return <Bar key={t.id ?? "none"} label={t.id ? typeName.get(t.id) ?? "A removed type" : "No type"} amount={t.budget} of={types[0].budget} tone={over > 0 ? "short" : undefined}
+                note={over > 0 ? `${inr(over)} over` : over < 0 ? `${inr(-over)} under` : t.actual > 0 ? `${inr(t.actual)} paid` : undefined} />;
+            })}
+          </ul>
+        )}
+      </section>
+
+      {banks.length > 0 && (
+        <section className="card stack">
+          <div className="page-head"><h2>Banks after {monthLabel(ym)}</h2></div>
+          <ul className="money-bars">
+            {banks.map(({ b, pos }) => <Bar key={b.id} label={b.name} amount={Math.abs(pos.after)} of={Math.max(...banks.map((x) => Math.abs(x.pos.after)), 1)} tone={pos.after < 0 ? "short" : undefined} note={pos.after < 0 ? "short" : "left"} />)}
+          </ul>
+        </section>
+      )}
+
+      <section className="card stack">
+        <div className="page-head"><h2>The year ahead</h2><span className={year < 0 ? "overdue-label" : "muted"}>{year < 0 ? `${inr(-year)} short over 12 months` : `${inr(year)} left over 12 months`}</span></div>
+        <ol className="money-year">
+          {ahead.map((m) => (
+            <li key={m.ym} className={m.left < 0 ? "is-short" : ""}>
+              <span className="money-year-month">{monthLabel(m.ym).replace(/^(\w{3})\w*/, "$1")}</span>
+              <span className="money-year-bars" aria-hidden>
+                <span className="is-in" style={{ width: `${(m.income / peak) * 100}%` }} />
+                <span className="is-out" style={{ width: `${(m.expense / peak) * 100}%` }} />
+              </span>
+              <span className="money-year-left">{m.left < 0 ? "− " : ""}{inr(Math.abs(m.left))}</span>
+              <span className="sr-only">Income {inr(m.income)}, expenses {inr(m.expense)}.</span>
+            </li>
+          ))}
+        </ol>
+        <p className="hint">
+          Upper bar: income. Lower bar: expenses. The figure is what the month leaves. Yearly increases are applied from each item’s anniversary.
+          {worst.length > 0 && ` ${worst.length === 1 ? `${monthLabel(worst[0].ym)} spends` : `${worst.length} months spend`} more than comes in.`}
+        </p>
+      </section>
+    </>
   );
 }
 
@@ -280,7 +363,7 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
         <section className="content">
           <div className="page">
             <div className="view-toggle money-tabs" role="group" aria-label="Money section">
-              {([["month", "Month"], ["banks", "Banks"], ["setup", "Setup"]] as const).map(([t, label]) => (
+              {([["month", "Month"], ["banks", "Banks"], ["insights", "Insights"], ["setup", "Setup"]] as const).map(([t, label]) => (
                 <button key={t} className={tab === t ? "is-active" : ""} aria-pressed={tab === t} onClick={() => setTab(t)}>{label}</button>
               ))}
             </div>
@@ -351,6 +434,13 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
                   </section>
                 )}
                 <p className="hint">Balances are the ones typed in. {scope ? "Each bank’s balance is updated in Setup by the person who added it." : "Update a balance in Setup after checking your bank."}</p>
+              </>
+            )}
+
+            {tab === "insights" && (
+              <>
+                {monthBar}
+                <Insights lines={lines} view={view} ym={ym} />
               </>
             )}
 

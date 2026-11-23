@@ -24,6 +24,7 @@ import { canAdd, isCurrent, isOpen, seatsOf } from "@/lib/circles";
 import { registerServiceWorker } from "@/lib/push-client";
 import MoneyView from "./MoneyView";
 import { useMoney, type Mode } from "./useMoney";
+import { linesDueOn, monthLines, type Line } from "@/lib/money";
 
 export type View = "week" | "agenda" | "tasks" | "types" | "places" | "settings" | "circles" | "activity";
 
@@ -233,6 +234,20 @@ export default function Planner() {
     ) : <TaskForm ctx={ctx} circles={shareable(t.circle_id)} existing={t} onDone={closePanel} />;
   }
 
+  // Money due on the day in view, from the budget that matches the calendar's scope: mine, or the circle's shared one.
+  const bills = useMemo(() => {
+    if (money.status !== "on" || (circle && !money.family.includes(circle.id))) return [];
+    const here = <T extends { circle_id?: string | null }>(rows: T[]) => rows.filter((r) => (r.circle_id ?? null) === (circle?.id ?? null));
+    return linesDueOn(monthLines(here(money.items), money.entries, here(money.increases), day.slice(0, 7)), day);
+  }, [money.status, money.family, money.items, money.entries, money.increases, circle, day]);
+  const payBill = async (l: Line) => {
+    const word = l.item.kind === "expense" ? "paid" : "received";
+    const { error } = await ctx.supabase.from("money_entries").upsert({ item_id: l.item.id, month: `${day.slice(0, 7)}-01`, paid_at: l.paid ? null : new Date().toISOString() });
+    if (error) return ctx.toast("error", `Couldn’t save: ${error.message}`);
+    await money.reload();
+    ctx.toast("ok", l.paid ? `${l.item.name} marked not ${word}` : `${l.item.name} ${word}`);
+  };
+
   // Settings belongs to both sides; everything else on screen follows the mode.
   const showMoney = mode === "money" && view !== "settings";
 
@@ -315,7 +330,7 @@ export default function Planner() {
             </div>
           )}
           {view === "agenda" && (
-            <AgendaView ctx={viewCtx} mayFinish={mayFinish} whoOf={whoOf} onCreate={(date, start, end) => setPanel({ kind: "new-appt", date, start, end })} onCreateTask={(date, time) => setPanel({ kind: "new-task", date, time })} scopeBar={scopeBar} day={day} setDay={setDay} onOpen={(id) => setPanel({ kind: "appt", id })} onOpenTask={(id) => setPanel({ kind: "edit-task", id })} toggle={toggle} />
+            <AgendaView ctx={viewCtx} bills={bills} onPayBill={!circle || canAdd(circle, ctx.userId) ? payBill : undefined} onOpenBills={() => switchMode("money")} mayFinish={mayFinish} whoOf={whoOf} onCreate={(date, start, end) => setPanel({ kind: "new-appt", date, start, end })} onCreateTask={(date, time) => setPanel({ kind: "new-task", date, time })} scopeBar={scopeBar} day={day} setDay={setDay} onOpen={(id) => setPanel({ kind: "appt", id })} onOpenTask={(id) => setPanel({ kind: "edit-task", id })} toggle={toggle} />
           )}
           {view === "tasks" && <TasksView ctx={{ ...ctx, tasks: myTasks }} onOpen={(id) => setPanel({ kind: "edit-task", id })} onNew={() => setPanel({ kind: "new-task" })} />}
           {view === "types" && <ActivityTypesView ctx={ctx} />}

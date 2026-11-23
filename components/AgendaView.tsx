@@ -5,10 +5,14 @@ import SlotMenu, { type Slot } from "./SlotMenu";
 import type { PlannerCtx } from "./usePlanner";
 import { fmtClock, fmtRange, relativeDayLabel, weekFromToday, todayISO, isTaskOverdue, fmtShortTime } from "@/lib/time";
 import { visibleAppointments } from "./WeekView";
+import { expected, inr, type Line } from "@/lib/money";
 
 export default function AgendaView({
-  ctx, day, setDay, onOpen, onOpenTask, onCreate, onCreateTask, toggle, whoOf, mayFinish, scopeBar,
+  ctx, day, setDay, onOpen, onOpenTask, onCreate, onCreateTask, toggle, whoOf, mayFinish, scopeBar, bills = [], onPayBill, onOpenBills,
 }: {
+  bills?: Line[]; // incomes and expenses that fall due on this day, when Money is on
+  onPayBill?: (l: Line) => void; // absent: this person may look, not mark
+  onOpenBills?: () => void;
   onCreate: (date: string, start: string, end: string) => void;
   onCreateTask: (date: string, time: string) => void;
   ctx: PlannerCtx;
@@ -146,6 +150,28 @@ export default function AgendaView({
                   <span className="day-task-title">{t.title}</span>
                   {whoOf(t.user_id) && <span className={`who act-${whoOf(t.user_id)!.color}`} title={whoOf(t.user_id)!.email}>{whoOf(t.user_id)!.letter}</span>}
                   <span className="day-task-when">{late ? `Overdue, ${t.due_date === day && t.due_time ? fmtClock(t.due_time) : relativeDayLabel(t.due_date, tz)}` : t.due_time ? fmtClock(t.due_time) : ""}</span>
+                </button>
+              </div>
+            );
+          })}
+        </section>
+      )}
+
+      {/* Money due today, from the budget: tap the circle to mark it paid or received, the row to open Money. */}
+      {bills.length > 0 && (
+        <section className="day-tasks">
+          <h2 className="section-title">Money</h2>
+          {bills.map((l) => {
+            const out = l.item.kind === "expense";
+            const word = out ? "paid" : "received";
+            return (
+              <div key={l.item.id} className={`day-task day-bill ${l.paid ? "is-done" : ""}`}>
+                <button className="day-task-check" disabled={!onPayBill} aria-pressed={l.paid} aria-label={`${l.item.name}: ${l.paid ? `mark not ${word}` : `mark ${word}`}`} onClick={() => onPayBill?.(l)}>
+                  {l.paid && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>}
+                </button>
+                <button className="day-task-main" onClick={onOpenBills}>
+                  <span className="day-task-title">{l.item.name}</span>
+                  <span className="day-task-when">{inr(expected(l))} {l.paid ? word : out ? "to pay" : "to come"}</span>
                 </button>
               </div>
             );
