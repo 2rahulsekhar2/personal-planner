@@ -3,25 +3,33 @@ import { useState } from "react";
 import type { PlannerCtx } from "./usePlanner";
 import type { MoneyCtx } from "./useMoney";
 import Select from "./Select";
-import { FREQ_LABELS, inr, monthLabel, parseAmount, type Line, type MoneyFreq, type MoneyItem, type MoneyKind } from "@/lib/money";
+import { FREQ_LABELS, inr, monthLabel, parseAmount, type Line, type MoneyFreq, type MoneyItem, type MoneyKind, type Proposal } from "@/lib/money";
+import { isCurrent, type Circle } from "@/lib/circles";
 import { todayISO } from "@/lib/time";
 
 const NONE = { value: "", label: "None" };
 
-/** Add or change an income or expense: the rule for every month it falls in. */
-export function MoneyItemForm({ ctx, money, existing, kind: startKind, onDone }: { ctx: PlannerCtx; money: MoneyCtx; existing?: MoneyItem; kind?: MoneyKind; onDone: () => void }) {
+/**
+ * Add or change an income or expense: the rule for every month it falls in.
+ * `money` holds the budget in view only. In a circle (`scope`) saving sends a request the other members approve.
+ * `again` is a rejected request being changed and sent once more: the form starts from what was asked.
+ */
+export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kind: startKind, onDone }: { ctx: PlannerCtx; money: MoneyCtx; scope: Circle | null; canEdit: boolean; existing?: MoneyItem; again?: Proposal; kind?: MoneyKind; onDone: () => void }) {
   const { supabase, toast } = ctx;
-  const [kind, setKind] = useState<MoneyKind>(existing?.kind ?? startKind ?? "expense");
-  const [name, setName] = useState(existing?.name ?? "");
-  const [amount, setAmount] = useState(existing ? String(existing.amount) : "");
-  const [freq, setFreq] = useState<MoneyFreq>(existing?.freq ?? "monthly");
-  const [start, setStart] = useState(existing?.start_date ?? todayISO(ctx.tz));
-  const [end, setEnd] = useState(existing?.end_date ?? "");
-  const [bank, setBank] = useState(existing?.bank_id ?? "");
-  const [type, setType] = useState(existing?.type_id ?? "");
-  const [increase, setIncrease] = useState(existing?.increase_id ?? "");
-  const [people, setPeople] = useState<string[]>(existing?.person_ids ?? []);
-  const [notes, setNotes] = useState(existing?.notes ?? "");
+  const from: Partial<MoneyItem> | undefined = again?.payload ?? existing;
+  // Someone else has to agree: another current owner or member. In a circle of one, a request is carried out at once.
+  const needsOthers = !!scope && scope.circle_members.some((m) => m.user_id !== ctx.userId && m.role !== "viewer" && isCurrent(m));
+  const [kind, setKind] = useState<MoneyKind>(from?.kind ?? startKind ?? "expense");
+  const [name, setName] = useState(from?.name ?? "");
+  const [amount, setAmount] = useState(from?.amount != null ? String(from.amount) : "");
+  const [freq, setFreq] = useState<MoneyFreq>(from?.freq ?? "monthly");
+  const [start, setStart] = useState(from?.start_date ?? todayISO(ctx.tz));
+  const [end, setEnd] = useState(from?.end_date ?? "");
+  const [bank, setBank] = useState(from?.bank_id ?? "");
+  const [type, setType] = useState(from?.type_id ?? "");
+  const [increase, setIncrease] = useState(from?.increase_id ?? "");
+  const [people, setPeople] = useState<string[]>(from?.person_ids ?? []);
+  const [notes, setNotes] = useState(from?.notes ?? "");
   const [saving, setSaving] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -45,27 +53,37 @@ export function MoneyItemForm({ ctx, money, existing, kind: startKind, onDone }:
       kind, name: name.trim(), amount: value, freq, start_date: start, end_date: freq === "once" ? null : end || null,
       bank_id: bank || null, type_id: type || null, increase_id: freq === "once" ? null : increase || null, person_ids: people, notes: notes.trim() || null,
     };
-    const { error } = existing ? await supabase.from("money_items").update(row).eq("id", existing.id) : await supabase.from("money_items").insert(row);
+    const result = scope ? await ask(existing ? "change" : "add", row) : existing ? await supabase.from("money_items").update(row).eq("id", existing.id) : await supabase.from("money_items").insert(row);
     setSaving(false);
-    if (error) return setError(`Couldn’t save: ${error.message}`);
+    if (result.error) return setError(`Couldn’t save: ${result.error.message}`);
     await money.reload();
-    toast("ok", existing ? `${row.name} updated` : `${row.name} added`);
+    toast("ok", result.data === "pending" ? `Sent to ${scope!.name} for approval` : existing ? `${row.name} updated` : `${row.name} added`);
     onDone();
+  }
+
+  // In a circle: a request, carried out at once when nobody else has to agree. A request it replaces is withdrawn.
+  async function ask(action: Proposal["action"], payload: object) {
+    const res = await supabase.rpc("money_propose", { p_circle: scope!.id, p_action: action, p_item: existing?.id ?? null, p_payload: payload });
+    if (!res.error && again) await supabase.rpc("money_withdraw", { p_proposal: again.id });
+    return res;
   }
 
   async function remove() {
     if (!existing) return;
     setSaving(true);
-    const { error } = await supabase.from("money_items").delete().eq("id", existing.id);
+    const result = scope ? await ask("delete", {}) : await supabase.from("money_items").delete().eq("id", existing.id);
     setSaving(false);
-    if (error) return setError(`Couldn’t delete: ${error.message}`);
+    if (result.error) return setError(`Couldn’t delete: ${result.error.message}`);
     await money.reload();
-    toast("ok", `${existing.name} deleted`);
+    toast("ok", result.data === "pending" ? `Sent to ${scope!.name} for approval` : `${existing.name} deleted`);
     onDone();
   }
 
   return (
     <form className="form" onSubmit={save} noValidate>
+      {scope && <p className="hint" style={{ margin: 0 }}>{canEdit ? `Shared with ${scope.name}.${needsOthers ? " Adding, changing or deleting it takes effect once every other member approves." : ""}` : `Shared with ${scope.name}. You are a viewer, so you cannot change it.`}</p>}
+      {again?.reason && <div className="alert alert-warn">Rejected: {again.reason}</div>}
+      <fieldset disabled={!canEdit} className="form" style={{ border: 0, padding: 0, margin: 0 }}>
       <div className="segmented" role="group" aria-label="Kind">
         {(["expense", "income"] as const).map((k) => (
           <button type="button" key={k} className={kind === k ? "is-active" : ""} aria-pressed={kind === k} onClick={() => { setKind(k); setType(""); }}>{k === "expense" ? "Expense" : "Income"}</button>
@@ -104,6 +122,7 @@ export function MoneyItemForm({ ctx, money, existing, kind: startKind, onDone }:
         </fieldset>
       )}
       <label className="field"><span>Notes <span className="muted">(optional)</span></span><textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></label>
+      </fieldset>
 
       {error && <div className="alert alert-error" role="alert">{error}</div>}
       {confirm && (
@@ -115,16 +134,18 @@ export function MoneyItemForm({ ctx, money, existing, kind: startKind, onDone }:
           </div>
         </div>
       )}
-      <div className="form-actions">
-        <button className="btn btn-primary" disabled={saving}>{saving ? "Saving…" : existing ? "Save changes" : `Add ${kind}`}</button>
-        {existing && !confirm && <button type="button" className="btn btn-ghost btn-danger" onClick={() => setConfirm(true)}>Delete</button>}
-      </div>
+      {canEdit && (
+        <div className="form-actions">
+          <button className="btn btn-primary" disabled={saving}>{saving ? "Saving…" : needsOthers ? "Send for approval" : existing ? "Save changes" : `Add ${kind}`}</button>
+          {existing && !again && !confirm && <button type="button" className="btn btn-ghost btn-danger" onClick={() => setConfirm(true)}>Delete</button>}
+        </div>
+      )}
     </form>
   );
 }
 
 /** One month of one item: its budget for that month alone, what was really paid, and whether to skip it. */
-export function MoneyLineForm({ ctx, money, line, ym, onEditItem, onDone }: { ctx: PlannerCtx; money: MoneyCtx; line: Line; ym: string; onEditItem: () => void; onDone: () => void }) {
+export function MoneyLineForm({ ctx, money, line, ym, shared, canEdit, onEditItem, onDone }: { ctx: PlannerCtx; money: MoneyCtx; line: Line; ym: string; shared: boolean; canEdit: boolean; onEditItem: () => void; onDone: () => void }) {
   const [budget, setBudget] = useState(String(line.budget));
   const [actual, setActual] = useState(line.actual === null ? "" : String(line.actual));
   const [paid, setPaid] = useState(line.paid);
@@ -140,7 +161,8 @@ export function MoneyLineForm({ ctx, money, line, ym, onEditItem, onDone }: { ct
     if (b === null || (actual.trim() && a === null)) return setError("Enter amounts as numbers, for example 1499.");
     setSaving(true);
     const { error } = await ctx.supabase.from("money_entries").upsert({
-      item_id: line.item.id, month: `${ym}-01`, budget: b === line.rule ? null : b, actual: a, skipped,
+      // On a shared item the month's own budget and "skip" would change the agreed plan: they are left alone.
+      item_id: line.item.id, month: `${ym}-01`, actual: a, ...(shared ? {} : { budget: b === line.rule ? null : b, skipped }),
       paid_at: paid ? (line.paid ? undefined : new Date().toISOString()) : null,
     });
     setSaving(false);
@@ -155,19 +177,21 @@ export function MoneyLineForm({ ctx, money, line, ym, onEditItem, onDone }: { ct
       <p className="muted" style={{ margin: 0 }}>{line.item.name} in {monthLabel(ym)}. Changes here stay in this month.</p>
       <label className="field">
         <span>Budget this month</span>
-        <input value={budget} onChange={(e) => setBudget(e.target.value)} inputMode="decimal" autoFocus />
-        {parseAmount(budget) !== line.rule && <span className="hint">Usually {inr(line.rule)}. <button type="button" className="link" onClick={() => setBudget(String(line.rule))}>Use that</button></span>}
+        <input value={budget} onChange={(e) => setBudget(e.target.value)} inputMode="decimal" autoFocus={!shared} disabled={shared} />
+        {shared
+          ? <span className="hint">The budget of a shared item is agreed by the circle. To change it, edit the item and send it for approval.</span>
+          : parseAmount(budget) !== line.rule && <span className="hint">Usually {inr(line.rule)}. <button type="button" className="link" onClick={() => setBudget(String(line.rule))}>Use that</button></span>}
       </label>
       <label className="field">
         <span>Actual amount <span className="muted">(optional)</span></span>
         <input value={actual} onChange={(e) => setActual(e.target.value)} inputMode="decimal" placeholder={`What you really ${expense ? "paid" : "received"}`} />
       </label>
       <label className="check"><input type="checkbox" checked={paid} onChange={(e) => setPaid(e.target.checked)} /> {expense ? "Paid" : "Received"}</label>
-      <label className="check"><input type="checkbox" checked={skipped} onChange={(e) => setSkipped(e.target.checked)} /> Skip this month</label>
+      {!shared && <label className="check"><input type="checkbox" checked={skipped} onChange={(e) => setSkipped(e.target.checked)} /> Skip this month</label>}
       {error && <div className="alert alert-error" role="alert">{error}</div>}
       <div className="form-actions">
-        <button className="btn btn-primary" disabled={saving}>{saving ? "Saving…" : "Save this month"}</button>
-        <button type="button" className="btn btn-ghost" onClick={onEditItem}>Edit every month</button>
+        {canEdit && <button className="btn btn-primary" disabled={saving}>{saving ? "Saving…" : "Save this month"}</button>}
+        <button type="button" className="btn btn-ghost" onClick={onEditItem}>{canEdit ? "Edit every month" : "See the item"}</button>
       </div>
     </form>
   );

@@ -5,6 +5,7 @@ import type { MoneyCtx } from "./useMoney";
 import Select, { type Option } from "./Select";
 import { inr, parseAmount, RELATIONSHIPS } from "@/lib/money";
 import { todayISO } from "@/lib/time";
+import type { Circle } from "@/lib/circles";
 
 // "relation" is a choice from RELATIONSHIPS, or Other with the relationship typed in.
 type Field = { key: string; label: string; kind: "text" | "amount" | "percent" | "choice" | "relation"; options?: Option[]; placeholder?: string };
@@ -12,8 +13,11 @@ type Row = { id: string; name: string; archived_at: string | null } & Record<str
 type Draft = { id?: string } & Record<string, string>;
 
 /** One of Money's lists (banks, types, yearly increases, family): add, edit, archive and restore. */
-function ListEditor({ ctx, money, title, noun, table, rows, fields, about, summary }: {
-  ctx: PlannerCtx; money: MoneyCtx; title: string; noun: string; table: string; rows: Row[]; fields: Field[]; about: string; summary: (row: Row) => string;
+// `scope`: the circle whose list this is, or null for a private one. `canEdit` false shows it read-only (a viewer).
+// `mayEdit` narrows editing to some rows (a bank: only the person who added it). `rowAction` adds a button to a row.
+function ListEditor({ ctx, money, scope, canEdit, title, noun, table, rows, fields, about, summary, mayEdit, rowAction }: {
+  ctx: PlannerCtx; money: MoneyCtx; scope: Circle | null; canEdit: boolean; title: string; noun: string; table: string; rows: Row[]; fields: Field[]; about: string; summary: (row: Row) => string;
+  mayEdit?: (row: Row) => boolean; rowAction?: (row: Row) => React.ReactNode;
 }) {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -37,7 +41,7 @@ function ListEditor({ ctx, money, title, noun, table, rows, fields, about, summa
     // A bank's balance carries the day it was typed in.
     if (table === "money_banks") row.balance_at = todayISO(ctx.tz);
     setBusy(true);
-    const { error } = draft.id ? await ctx.supabase.from(table).update(row).eq("id", draft.id) : await ctx.supabase.from(table).insert(row);
+    const { error } = draft.id ? await ctx.supabase.from(table).update(row).eq("id", draft.id) : await ctx.supabase.from(table).insert(scope ? { ...row, circle_id: scope.id } : row);
     setBusy(false);
     if (error) return setError(`Couldn’t save: ${error.message}`);
     setDraft(null);
@@ -60,7 +64,7 @@ function ListEditor({ ctx, money, title, noun, table, rows, fields, about, summa
     <section className="stack">
       <div className="page-head">
         <h2>{title}</h2>
-        {!draft && <button className="btn btn-sm" onClick={() => { setDraft(blank()); setError(null); }}>＋ New {noun}</button>}
+        {!draft && canEdit && <button className="btn btn-sm" onClick={() => { setDraft(blank()); setError(null); }}>＋ New {noun}</button>}
       </div>
       <p className="muted" style={{ margin: 0 }}>{about}</p>
       {draft && (
@@ -93,10 +97,11 @@ function ListEditor({ ctx, money, title, noun, table, rows, fields, about, summa
         {list.map((r) => (
           <li key={r.id} className="list-row">
             <span className="grow"><strong>{r.name}</strong> <span className="muted">{summary(r)}</span></span>
-            <span className="row-actions">
+            {canEdit && (!mayEdit || mayEdit(r)) && <span className="row-actions">
+              {!r.archived_at && rowAction?.(r)}
               {!r.archived_at && <button className="btn btn-ghost btn-sm" onClick={() => { setDraft({ id: r.id, ...Object.fromEntries(fields.map((f) => [f.key, String(r[f.key] ?? "")])) }); setError(null); }}>Edit</button>}
               <button className="btn btn-ghost btn-sm" onClick={() => archive(r, !r.archived_at)}>{r.archived_at ? "Restore" : "Archive"}</button>
-            </span>
+            </span>}
           </li>
         ))}
       </ul>
@@ -107,19 +112,75 @@ function ListEditor({ ctx, money, title, noun, table, rows, fields, about, summa
 
 const KINDS: Option[] = [{ value: "expense", label: "Expense" }, { value: "income", label: "Income" }];
 
-/** The lists every income and expense draws on. */
-export default function MoneySetup({ ctx, money }: { ctx: PlannerCtx; money: MoneyCtx }) {
-  const shared = { ctx, money };
+/** The family admin's switch: which of their circles share a budget. */
+function FamilyPlans({ ctx, money, circles }: { ctx: PlannerCtx; money: MoneyCtx; circles: Circle[] }) {
+  const [busy, setBusy] = useState(false);
+  const owned = circles.filter((c) => c.owner_id === ctx.userId);
+  if (!money.shared || !owned.length) return null;
+  const set = async (c: Circle, on: boolean) => {
+    setBusy(true);
+    const { error } = await ctx.supabase.rpc("money_set_family", { p_circle: c.id, p_on: on });
+    setBusy(false);
+    if (error) return ctx.toast("error", error.message);
+    await money.reload();
+    ctx.toast("ok", on ? `${c.name} now shares a budget` : `Family plan turned off for ${c.name}`);
+  };
+  return (
+    <section className="stack">
+      <div className="page-head"><h2>Family plan</h2></div>
+      <p className="muted" style={{ margin: 0 }}>Share a budget with a circle you own. Every member gets Money, and each income or expense in the shared budget needs every other member’s approval. Turning it off hides the shared budget and deletes nothing.</p>
+      <ul className="card list">
+        {owned.map((c) => {
+          const on = money.family.includes(c.id);
+          return (
+            <li key={c.id} className="list-row">
+              <span className="grow"><strong>{c.name}</strong> <span className="muted">{on ? "Sharing a budget" : `${c.circle_members.length} ${c.circle_members.length === 1 ? "member" : "members"}`}</span></span>
+              <span className="row-actions"><button className={`btn btn-sm ${on ? "btn-ghost" : ""}`} disabled={busy} onClick={() => set(c, !on)}>{on ? "Turn off" : "Turn on"}</button></span>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  );
+}
+
+/** The lists every income and expense draws on, for the budget in view: `money` holds that budget's rows only. */
+export default function MoneySetup({ ctx, money, scope, canEdit, circles }: { ctx: PlannerCtx; money: MoneyCtx; scope: Circle | null; canEdit: boolean; circles: Circle[] }) {
+  const shared = { ctx, money, scope, canEdit };
+  // Merge: the family admin joins a typed-in person to another record of the same person, usually the member they became.
+  const [merge, setMerge] = useState<{ from: Row; into: string } | null>(null);
+  const mayMerge = money.shared && (!scope || scope.owner_id === ctx.userId);
+  const others = merge ? money.people.filter((p) => p.id !== merge.from.id && !p.archived_at) : [];
+  const doMerge = async () => {
+    if (!merge?.into) return;
+    const { error } = await ctx.supabase.rpc("money_merge_people", { p_from: merge.from.id, p_into: merge.into });
+    if (error) return ctx.toast("error", error.message);
+    setMerge(null);
+    await money.reload();
+    ctx.toast("ok", `${merge.from.name} merged`);
+  };
   return (
     <>
+      {!scope && <FamilyPlans ctx={ctx} money={money} circles={circles} />}
       <ListEditor {...shared} title="Banks" noun="bank" table="money_banks" rows={money.banks as unknown as Row[]}
-        about="The accounts your money moves through. Keep each balance current to see what is left after the month’s bills."
+        about={scope ? `Accounts shared with ${scope.name}. Everyone sees the balance; only the person who added a bank can change it.` : "The accounts your money moves through. Keep each balance current to see what is left after the month’s bills."}
         fields={[{ key: "name", label: "Name", kind: "text", placeholder: "HDFC Bank" }, { key: "balance", label: "Current balance", kind: "amount", placeholder: "₹" }]}
-        summary={(r) => inr(Number(r.balance))} />
+        summary={(r) => inr(Number(r.balance))} mayEdit={(r) => r.user_id === ctx.userId} />
       <ListEditor {...shared} title="Family" noun="person" table="money_people" rows={money.people as unknown as Row[]}
-        about="The people money is spent on or earned by. They do not need an account."
+        about={scope ? `The people ${scope.name}’s money is spent on or earned by. Members of the circle are listed already; add anyone without an account.` : "The people money is spent on or earned by. They do not need an account."}
         fields={[{ key: "name", label: "Name", kind: "text", placeholder: "Anchal" }, { key: "relationship", label: "Relationship", kind: "relation" }]}
-        summary={(r) => String(r.relationship)} />
+        summary={(r) => `${r.relationship}${r.member_id ? ", in the circle" : ""}`}
+        rowAction={mayMerge && money.people.length > 1 ? (r) => !r.member_id && <button className="btn btn-ghost btn-sm" onClick={() => setMerge({ from: r, into: "" })}>Merge</button> : undefined} />
+      {merge && (
+        <div className="confirm-box">
+          <p>Merge {merge.from.name} into another record of the same person. Every income and expense for {merge.from.name} moves to that record, and {merge.from.name} is removed. This cannot be undone.</p>
+          <div className="row">
+            <Select id="merge-into" value={merge.into} options={[{ value: "", label: "Choose who" }, ...others.map((p) => ({ value: p.id, label: p.name }))]} onChange={(into) => setMerge({ ...merge, into })} />
+            <button className="btn btn-danger" disabled={!merge.into} onClick={doMerge}>Merge</button>
+            <button className="btn btn-ghost" onClick={() => setMerge(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
       <ListEditor {...shared} title="Types" noun="type" table="money_types" rows={money.types as unknown as Row[]}
         about="Groups for your incomes and expenses, such as Home expenses or Salary."
         fields={[{ key: "name", label: "Name", kind: "text", placeholder: "Home expenses" }, { key: "kind", label: "Used for", kind: "choice", options: KINDS }]}

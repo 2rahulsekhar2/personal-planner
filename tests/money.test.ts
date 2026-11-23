@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { amountOn, bankPosition, datesInMonth, monthLines, parseAmount, shiftMonth, totals, type MoneyEntry, type MoneyItem } from "@/lib/money";
+import { amountOn, bankPosition, waitingOn, datesInMonth, monthLines, parseAmount, shiftMonth, totals, type MoneyEntry, type MoneyItem } from "@/lib/money";
 
 const item = (over: Partial<MoneyItem>): MoneyItem => ({
   id: "i1", kind: "expense", name: "Wifi bill", amount: 1000, freq: "monthly", start_date: "2026-01-15", end_date: null,
@@ -81,5 +81,23 @@ describe("helpers", () => {
     expect(parseAmount("")).toBeNull();
     expect(parseAmount("-5")).toBeNull();
     expect(parseAmount("abc")).toBeNull();
+  });
+});
+
+describe("approvals", () => {
+  const members = [
+    { user_id: "asker", role: "member" },
+    { user_id: "owner", role: "owner" },
+    { user_id: "looker", role: "viewer" },
+    { user_id: "gone", role: "member", expires_at: "2020-01-01T00:00:00Z" },
+    { user_id: "other", role: "member" },
+  ];
+  const p = { id: "p1", created_by: "asker" };
+  it("waits for every current owner and member except the asker", () => {
+    expect(waitingOn(p, members, [])).toEqual(["owner", "other"]);
+  });
+  it("stops waiting for those who approved this request", () => {
+    expect(waitingOn(p, members, [{ proposal_id: "p1", user_id: "owner" }, { proposal_id: "p2", user_id: "other" }])).toEqual(["other"]);
+    expect(waitingOn(p, members, [{ proposal_id: "p1", user_id: "owner" }, { proposal_id: "p1", user_id: "other" }])).toEqual([]);
   });
 });

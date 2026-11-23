@@ -306,7 +306,7 @@ export default function Planner() {
         </div>
       )}
 
-      {showMoney ? <MoneyView ctx={ctx} money={money} /> : <main className={`main ${panel ? "has-panel" : ""}`}>
+      {showMoney ? <MoneyView ctx={ctx} money={money} circles={live} /> : <main className={`main ${panel ? "has-panel" : ""}`}>
         <section className="content">
           {view === "week" && (
             <div className="week-layout">

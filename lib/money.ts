@@ -3,13 +3,16 @@ import { DateTime } from "luxon";
 export type MoneyKind = "income" | "expense";
 export type MoneyFreq = "once" | "daily" | "weekly" | "monthly" | "yearly";
 
-export interface Bank { id: string; name: string; balance: number; balance_at: string | null; archived_at: string | null }
-export interface MoneyType { id: string; name: string; kind: MoneyKind; archived_at: string | null }
-export interface Increase { id: string; name: string; percent: number; archived_at: string | null }
-export interface Person { id: string; name: string; relationship: string; archived_at: string | null }
+// circle_id on every row: null is private, otherwise the circle it is shared with. Absent until 0016_money_shared.sql has been run.
+export interface Bank { id: string; user_id: string; circle_id?: string | null; name: string; balance: number; balance_at: string | null; archived_at: string | null }
+export interface MoneyType { id: string; circle_id?: string | null; name: string; kind: MoneyKind; archived_at: string | null }
+export interface Increase { id: string; circle_id?: string | null; name: string; percent: number; archived_at: string | null }
+/** member_id: this person is also that member of the circle. */
+export interface Person { id: string; circle_id?: string | null; member_id?: string | null; name: string; relationship: string; archived_at: string | null }
 
 export interface MoneyItem {
   id: string;
+  circle_id?: string | null;
   kind: MoneyKind;
   name: string;
   amount: number; // the budget for one occurrence
@@ -31,6 +34,26 @@ export interface MoneyEntry {
   actual: number | null;
   paid_at: string | null;
   skipped: boolean;
+}
+
+/** A request to add, change or delete a shared item. It takes effect once everyone it is waiting on has approved. */
+export interface Proposal {
+  id: string;
+  circle_id: string;
+  item_id: string | null; // null: a new item
+  action: "add" | "change" | "delete";
+  payload: Partial<MoneyItem>; // the item as asked for; empty for a delete
+  created_by: string;
+  status: "pending" | "approved" | "rejected" | "withdrawn";
+  reason: string | null; // why it was rejected
+}
+
+/** Who still has to approve: the circle's current owners and members, apart from whoever asked and whoever already has. */
+export function waitingOn(p: Pick<Proposal, "id" | "created_by">, members: { user_id: string; role: string; expires_at?: string | null }[], approvals: { proposal_id: string; user_id: string }[], now = Date.now()): string[] {
+  const done = new Set(approvals.filter((a) => a.proposal_id === p.id).map((a) => a.user_id));
+  return members
+    .filter((m) => m.role !== "viewer" && (!m.expires_at || Date.parse(m.expires_at) > now) && m.user_id !== p.created_by && !done.has(m.user_id))
+    .map((m) => m.user_id);
 }
 
 export const FREQ_LABELS: Record<MoneyFreq, string> = { once: "One time", daily: "Every day", weekly: "Every week", monthly: "Every month", yearly: "Every year" };
