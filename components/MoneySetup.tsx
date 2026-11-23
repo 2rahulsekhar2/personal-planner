@@ -1,5 +1,6 @@
 "use client";
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { DateTime } from "luxon";
 import type { PlannerCtx } from "./usePlanner";
 import type { MoneyCtx } from "./useMoney";
 import Select, { type Option } from "./Select";
@@ -105,6 +106,103 @@ function ListEditor({ ctx, money, title, noun, table, rows, fields, about, summa
   );
 }
 
+type Backup = { id: string; label: string; created_at: string };
+
+/** Excel in and out, and the backups taken each time the data is replaced. */
+function MoneyTransfer({ ctx, money }: { ctx: PlannerCtx; money: MoneyCtx }) {
+  const [backups, setBackups] = useState<Backup[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const [file, setFile] = useState<File | null>(null);
+  const [goBack, setGoBack] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [skipped, setSkipped] = useState<string[]>([]);
+  const picker = useRef<HTMLInputElement>(null);
+  const nowYm = todayISO(ctx.tz).slice(0, 7);
+
+  const load = useCallback(async () => {
+    const { data, error } = await ctx.supabase.from("money_backups").select("id, label, created_at").order("created_at", { ascending: false });
+    // No table yet: the database is one migration behind.
+    setError(error ? "Import and backups need a database update. Run supabase/migrations/0016_money_backups.sql in the Supabase SQL editor, then reload." : null);
+    setBackups((data as Backup[] | null) ?? []);
+  }, [ctx.supabase]);
+  useEffect(() => {
+    load();
+  }, [load]);
+
+  const done = async (message: string) => {
+    await Promise.all([money.reload(), load()]);
+    ctx.toast("ok", message);
+  };
+  async function importFile() {
+    if (!file || busy) return;
+    setBusy(true);
+    const body = new FormData();
+    body.set("file", file);
+    body.set("month", nowYm);
+    const res = await fetch("/api/money/import", { method: "POST", body }).catch(() => null);
+    const json = await res?.json().catch(() => null);
+    setBusy(false);
+    if (!res?.ok) return ctx.toast("error", json?.error ?? "Couldn’t reach the server. Check your connection and try again.");
+    setFile(null);
+    setSkipped(json.skipped ?? []);
+    await done(`${json.items} incomes and expenses imported`);
+  }
+  async function restore(b: Backup) {
+    setBusy(true);
+    const { error } = await ctx.supabase.rpc("money_restore", { p_id: b.id });
+    setBusy(false);
+    setGoBack(null);
+    if (error) return ctx.toast("error", `Couldn’t go back: ${error.message}`);
+    await done("Backup restored");
+  }
+
+  return (
+    <section className="stack">
+      <div className="page-head"><h2>Import and export</h2></div>
+      <p className="muted" style={{ margin: 0 }}>Load a budget from an Excel file, or save yours as one. The file has a row for each income or expense and a column for each month.</p>
+      {error ? <div className="alert alert-warn">{error}</div> : (
+        <>
+          <div className="card stack">
+            <input ref={picker} type="file" accept=".xlsx" hidden onChange={(e) => { setFile(e.target.files?.[0] ?? null); e.target.value = ""; }} />
+            {file ? (
+              <>
+                <p style={{ margin: 0 }}>Import <strong>{file.name}</strong>? It replaces your banks, types, yearly increases, incomes and expenses. What you have now is kept as a backup below.</p>
+                <div className="form-actions">
+                  <button className="btn btn-primary" disabled={busy} onClick={importFile}>{busy ? "Importing…" : "Replace my data"}</button>
+                  <button className="btn btn-ghost" disabled={busy} onClick={() => setFile(null)}>Cancel</button>
+                </div>
+              </>
+            ) : (
+              <div className="form-actions">
+                <button className="btn" onClick={() => picker.current?.click()}>Import from Excel</button>
+                <a className="btn" href={`/api/money/export?month=${nowYm}`} download>Export to Excel</a>
+              </div>
+            )}
+            {skipped.length > 0 && <p className="muted" style={{ margin: 0 }}>Left out, because no month had a figure: {skipped.join(", ")}.</p>}
+          </div>
+          <ul className="card list">
+            {backups.length === 0 && <li className="empty">No backups yet. One is taken each time you import.</li>}
+            {backups.map((b) => (
+              <li key={b.id} className="list-row">
+                <span className="grow"><strong>{DateTime.fromISO(b.created_at).setZone(ctx.tz).toFormat("d LLL yyyy, h:mm a")}</strong> <span className="muted">{b.label}</span></span>
+                <span className="row-actions">
+                  {goBack === b.id ? (
+                    <>
+                      <button className="btn btn-primary btn-sm" disabled={busy} onClick={() => restore(b)}>{busy ? "Restoring…" : "Replace my data"}</button>
+                      <button className="btn btn-ghost btn-sm" disabled={busy} onClick={() => setGoBack(null)}>Cancel</button>
+                    </>
+                  ) : <button className="btn btn-ghost btn-sm" onClick={() => setGoBack(b.id)}>Go back to this</button>}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {backups.length > 0 && <p className="hint">Going back replaces everything in Money with the backup. What you have now is saved as a new backup first. The ten newest are kept.</p>}
+        </>
+      )}
+    </section>
+  );
+}
+
 const KINDS: Option[] = [{ value: "expense", label: "Expense" }, { value: "income", label: "Income" }];
 
 /** The lists every income and expense draws on. */
@@ -128,6 +226,7 @@ export default function MoneySetup({ ctx, money }: { ctx: PlannerCtx; money: Mon
         about="A rise applied to a repeating item once a year, on the anniversary of its first date."
         fields={[{ key: "name", label: "Name", kind: "text", placeholder: "EMI step-up" }, { key: "percent", label: "Percent a year", kind: "percent", placeholder: "10" }]}
         summary={(r) => `${Number(r.percent)}% a year`} />
+      <MoneyTransfer ctx={ctx} money={money} />
     </>
   );
 }
