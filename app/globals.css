@@ -383,9 +383,30 @@ button.avatar:hover { background: var(--accent-hover); }
   display: grid; gap: 2px; text-align: left; cursor: pointer; padding: 12px 14px; border-radius: var(--radius);
   background: var(--a-bg); color: var(--a-ink); border: 1px solid transparent;
 }
+/* An appointment: when on the left (start over end), what and where on the right. */
+.agenda-appt { grid-template-columns: 68px 1fr; column-gap: 12px; align-items: center; }
+.agenda-when { display: flex; flex-direction: column; line-height: 1.25; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.agenda-when strong { font-size: 15px; }
+.agenda-when span { font-size: 12px; opacity: .75; }
+.agenda-body { display: grid; gap: 2px; min-width: 0; }
+.agenda-place { display: inline-flex; align-items: center; gap: 3px; }
+.agenda-gap-len { margin-left: auto; font-variant-numeric: tabular-nums; }
+.agenda-gap > span:first-child { font-variant-numeric: tabular-nums; }
+.agenda .line-head { margin-bottom: 4px; }
+.agenda .line-head h2 { font-size: 17px; }
+.bank-dots i[class*="act-"] { background: var(--a-bg); border-color: var(--a-bd); }
+/* The day as one bar, 6 AM to 10 PM. A block is an appointment in its activity's colour; what is left is free. */
+.day-bar-wrap { margin: 0 0 18px; }
+.day-bar { position: relative; height: 22px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line); overflow: hidden; }
+.day-bar-block { position: absolute; top: 0; bottom: 0; min-width: 3px; background: var(--a-bg); border-left: 1px solid var(--surface); }
+.day-bar-block.is-tentative { background: repeating-linear-gradient(-45deg, var(--a-bg) 0 3px, transparent 3px 6px); }
+.day-bar-now { position: absolute; top: -2px; bottom: -2px; width: 2px; margin-left: -1px; background: var(--now); }
+.day-bar-hours { position: relative; height: 16px; font-size: 10px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.day-bar-hours span { position: absolute; top: 3px; translate: -50% 0; }
+.day-bar-hours span:first-child { translate: 0 0; }
 .agenda-time { font-weight: 700; font-size: 14px; }
 .agenda-title { font-weight: 600; font-size: 16px; }
-.agenda-meta { display: flex; flex-wrap: wrap; gap: 4px; font-size: 13px; opacity: .9; }
+.agenda-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; font-size: 13px; opacity: .9; }
 /* Free time is a button: press it to put an appointment or task there. */
 .agenda-gap { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; color: var(--muted); font-size: 13px; text-align: left; padding: 8px 14px; background: none; border: 1px dashed var(--line-2); border-radius: 14px; cursor: pointer; }
 .agenda-gap:hover, .agenda-gap:focus-visible { color: var(--accent-text); border-color: var(--accent); background: var(--accent-soft); }

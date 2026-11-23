@@ -7,6 +7,13 @@ import { fmtClock, fmtRange, relativeDayLabel, weekFromToday, todayISO, isTaskOv
 import { visibleAppointments } from "./WeekView";
 import { expected, inr, type Line } from "@/lib/money";
 
+const PIN = <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 21s-6.5-5.6-6.5-11a6.5 6.5 0 0 1 13 0c0 5.4-6.5 11-6.5 11z" /><circle cx="12" cy="10" r="2.3" /></svg>;
+/** "45m", "2h", "5h 55m". */
+function lengthOf(from: DateTime, to: DateTime) {
+  const m = Math.round(to.diff(from, "minutes").minutes);
+  return m < 60 ? `${m}m` : m % 60 ? `${Math.floor(m / 60)}h ${m % 60}m` : `${m / 60}h`;
+}
+
 export default function AgendaView({
   ctx, day, setDay, onOpen, onOpenTask, onCreate, onCreateTask, toggle, whoOf, mayFinish, scopeBar, bills = [], onPayBill, onOpenBills,
 }: {
@@ -69,6 +76,19 @@ export default function AgendaView({
   // With no gap left to press (a full day, or late evening today), one row still offers to add something.
   const spare = (day === today ? DateTime.now().setZone(tz) : dayStart.set({ hour: 9 })).startOf("minute");
 
+  // The day drawn as one bar, 6 AM to 10 PM: each appointment a block in its activity's colour, the rest free.
+  const barFrom = dayStart.set({ hour: 6 });
+  const barSpan = 16 * 60;
+  const at = (d: DateTime) => Math.max(0, Math.min(100, (d.diff(barFrom, "minutes").minutes / barSpan) * 100));
+  const blocks = active.map((a) => {
+    const from = at(DateTime.fromISO(a.starts_at).setZone(tz));
+    const to = at(DateTime.fromISO(a.ends_at).setZone(tz));
+    return { id: a.id, left: from, width: to - from, color: typeById.get(a.activity_type_id ?? "")?.color ?? "slate", tentative: a.status === "tentative" };
+  }).filter((b) => b.width > 0);
+  const nowAt = day === today ? at(DateTime.now().setZone(tz)) : null;
+  const freeMinutes = gaps.reduce((sum, g) => sum + g.to.diff(g.from, "minutes").minutes, 0);
+  const allTasks = [...overdue, ...dayTasks.filter((t) => !overdue.includes(t))];
+
   type Row = { at: string; node: React.ReactNode };
   const rows: Row[] = [
     ...items.map((a) => {
@@ -79,16 +99,22 @@ export default function AgendaView({
         at: a.starts_at,
         node: (
           <button key={a.id} className={`agenda-appt act-${t?.color ?? "slate"} status-${a.status} ${a.outcome ? `outcome-${a.outcome}` : ""}`} onClick={() => onOpen(a.id)}>
-            <span className="agenda-time">{fmtRange(a.starts_at, a.ends_at, tz)}</span>
-            <span className="agenda-title">
-              {a.title}
-              {a.status !== "confirmed" && <span className="tag">{a.status === "tentative" ? "Tentative" : "Cancelled"}</span>}
+            {/* When, as a block: the start over the end. */}
+            <span className="agenda-when" aria-label={fmtRange(a.starts_at, a.ends_at, tz)}>
+              <strong>{fmtShortTime(a.starts_at, tz)}</strong>
+              <span>{fmtShortTime(a.ends_at, tz)}</span>
             </span>
-            <span className="agenda-meta">
-              <span className="type-label"><span className="swatch" aria-hidden />{t?.name ?? a.custom_activity}</span>
-              {(p?.name ?? a.custom_place) && <span>· {p?.name ?? a.custom_place}</span>}
-              {who && <span className={`who act-${who.color}`} title={who.email}>{who.letter}</span>}
-              {a.team && <span>· {a.team}</span>}
+            <span className="agenda-body">
+              <span className="agenda-title">
+                {a.title}
+                {a.status !== "confirmed" && <span className="tag">{a.status === "tentative" ? "Tentative" : "Cancelled"}</span>}
+              </span>
+              <span className="agenda-meta">
+                <span className="type-label"><span className="swatch" aria-hidden />{t?.name ?? a.custom_activity}</span>
+                {(p?.name ?? a.custom_place) && <span className="agenda-place">{PIN}{p?.name ?? a.custom_place}</span>}
+                {a.team && <span>{a.team}</span>}
+                {who && <span className={`who act-${who.color}`} title={who.email}>{who.letter}</span>}
+              </span>
             </span>
           </button>
         ),
@@ -98,7 +124,8 @@ export default function AgendaView({
       at: g.from.toUTC().toISO()!,
       node: (
         <button key={"gap" + g.from.toISO()} className="agenda-gap" aria-label={`Free ${fmtShortTime(g.from, tz)} to ${fmtShortTime(g.to, tz)}. Add an appointment or task`} onClick={(e) => ask(e, g.from, g.to)}>
-          <span>Free {fmtShortTime(g.from, tz)} – {fmtShortTime(g.to, tz)}</span>
+          <span>{fmtShortTime(g.from, tz)} – {fmtShortTime(g.to, tz)}</span>
+          <span className="agenda-gap-len">{lengthOf(g.from, g.to)} free</span>
           <svg className="agenda-gap-plus" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
         </button>
       ),
@@ -133,11 +160,20 @@ export default function AgendaView({
         {relativeDayLabel(day, tz)} <span className="muted">{d.toFormat("cccc, d LLLL")}</span>
       </h1>
 
+      <div className="day-bar-wrap">
+        <div className="day-bar" role="img" aria-label={`${active.length} ${active.length === 1 ? "appointment" : "appointments"} between 6 AM and 10 PM${freeMinutes ? `, ${lengthOf(dayStart, dayStart.plus({ minutes: freeMinutes }))} free` : ""}`}>
+          {blocks.map((b) => <span key={b.id} className={`day-bar-block act-${b.color} ${b.tentative ? "is-tentative" : ""}`} style={{ left: `${b.left}%`, width: `${b.width}%` }} />)}
+          {nowAt !== null && nowAt > 0 && nowAt < 100 && <span className="day-bar-now" style={{ left: `${nowAt}%` }} />}
+        </div>
+        {/* Every third hour, each label under its own place on the bar. */}
+        <div className="day-bar-hours" aria-hidden>{[6, 9, 12, 15, 18, 21].map((h) => <span key={h} style={{ left: `${((h - 6) / 16) * 100}%` }}>{h > 12 ? h - 12 : h}</span>)}</div>
+      </div>
+
       {/* Tasks are plain rows: tap the circle to finish one, tap the row to open it. Overdue ones lead, in red. */}
-      {overdue.length + dayTasks.length > 0 && (
+      {allTasks.length > 0 && (
         <section className="day-tasks">
-          <h2 className="section-title">Tasks</h2>
-          {[...overdue, ...dayTasks.filter((t) => !overdue.includes(t))].map((t) => {
+          <div className="page-head line-head"><h2>Tasks</h2><span className="bank-dots" role="img" aria-label={`${allTasks.filter((t) => t.state !== "pending").length} of ${allTasks.length} done`}>{allTasks.map((t) => <i key={t.id} className={t.state !== "pending" ? "is-paid" : isTaskOverdue(t, tz) ? "is-late" : ""} />)}</span></div>
+          {allTasks.map((t) => {
             const late = isTaskOverdue(t, tz);
             const done = t.state !== "pending";
             const canDo = mayFinish(t);
@@ -160,7 +196,7 @@ export default function AgendaView({
       {/* Money due today, from the budget: tap the circle to mark it paid or received, the row to open Money. */}
       {bills.length > 0 && (
         <section className="day-tasks">
-          <h2 className="section-title">Money</h2>
+          <div className="page-head line-head"><h2>Money</h2><span className="bank-dots" role="img" aria-label={`${bills.filter((l) => l.paid).length} of ${bills.length} settled`}>{bills.map((l) => <i key={l.item.id} className={l.paid ? "is-paid" : ""} />)}</span></div>
           {bills.map((l) => {
             const out = l.item.kind === "expense";
             const word = out ? "paid" : "received";
@@ -180,8 +216,8 @@ export default function AgendaView({
       )}
 
       <section className="agenda-list">
-        <h2 className="section-title">Appointments</h2>
-        {items.length === 0 && <p className="empty">Nothing booked. The whole day is free.</p>}
+        <div className="page-head line-head"><h2>Appointments</h2><span className="bank-dots" aria-hidden>{items.map((a) => <i key={a.id} className={a.status === "cancelled" ? "is-skipped" : `act-${typeById.get(a.activity_type_id ?? "")?.color ?? "slate"}`} />)}</span></div>
+        {items.length === 0 && <p className="empty">Nothing booked.</p>}
         {rows.map((r) => r.node)}
         {gaps.length === 0 && day >= today && (
           <button className="agenda-gap" onClick={(e) => ask(e, spare, DateTime.min(spare.plus({ hours: 2 }), dayEnd.minus({ minutes: 1 })))}>
