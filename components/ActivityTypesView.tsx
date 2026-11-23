@@ -14,81 +14,84 @@ export function ColorPicker({ value, onChange }: { value: string; onChange: (c: 
   );
 }
 
+type Draft = { id?: string; name: string; color: string };
+
+/** Activities as chips in their own colours. Pressing one opens it to rename, recolour or archive; the dashed chip adds one. */
 export default function ActivityTypesView({ ctx }: { ctx: PlannerCtx }) {
   const { types, supabase, refresh, toast } = ctx;
-  const [name, setName] = useState("");
-  const [color, setColor] = useState(ACTIVITY_COLORS[types.length % ACTIVITY_COLORS.length].key);
-  const [editing, setEditing] = useState<ActivityType | null>(null);
+  const [draft, setDraft] = useState<Draft | null>(null);
   const [showArchived, setShowArchived] = useState(false);
   const [busy, setBusy] = useState(false);
 
-  async function add(e: React.FormEvent) {
+  async function save(e: React.FormEvent) {
     e.preventDefault();
-    if (!name.trim() || busy) return;
-    if (types.some((t) => !t.archived_at && t.name.toLowerCase() === name.trim().toLowerCase())) {
-      return toast("error", "You already have an activity type with that name.");
+    const name = draft?.name.trim();
+    if (!draft || !name || busy) return;
+    if (types.some((t) => t.id !== draft.id && !t.archived_at && t.name.toLowerCase() === name.toLowerCase())) {
+      return toast("error", "You already have an activity with that name.");
     }
     setBusy(true);
-    const { error } = await supabase.from("activity_types").insert({ name: name.trim(), color });
+    const { error } = draft.id ? await supabase.from("activity_types").update({ name, color: draft.color }).eq("id", draft.id) : await supabase.from("activity_types").insert({ name, color: draft.color });
     setBusy(false);
     if (error) return toast("error", `Couldn’t save: ${error.message}`);
-    setName("");
-    setColor(ACTIVITY_COLORS[(types.length + 1) % ACTIVITY_COLORS.length].key);
+    setDraft(null);
     await refresh();
-    toast("ok", "Activity type added");
-  }
-
-  async function saveEdit() {
-    if (!editing || !editing.name.trim()) return;
-    const { error } = await supabase.from("activity_types").update({ name: editing.name.trim(), color: editing.color }).eq("id", editing.id);
-    if (error) return toast("error", `Couldn’t save: ${error.message}`);
-    setEditing(null);
-    await refresh();
-    toast("ok", "Saved. The new name shows everywhere.");
+    toast("ok", draft.id ? "Saved. The new name shows everywhere." : `${name} added`);
   }
 
   async function archive(t: ActivityType, on: boolean) {
     const { error } = await supabase.from("activity_types").update({ archived_at: on ? new Date().toISOString() : null }).eq("id", t.id);
     if (error) return toast("error", `Couldn’t update: ${error.message}`);
+    setDraft(null);
     await refresh();
     toast("ok", on ? `${t.name} archived. Existing appointments are kept.` : `${t.name} restored`);
   }
 
   const list = types.filter((t) => (showArchived ? t.archived_at : !t.archived_at));
+  const archived = types.filter((t) => t.archived_at).length;
+  const editing = draft?.id ? types.find((t) => t.id === draft.id) : undefined;
+  const fresh = () => setDraft({ name: "", color: ACTIVITY_COLORS[types.length % ACTIVITY_COLORS.length].key });
 
   return (
     <div className="page">
-      <div className="page-head"><h1>Activity types</h1></div>
-      <p className="muted">Appointments of the same activity type can never overlap. Different types can, after a warning.</p>
-
-      <form className="card form-inline" onSubmit={add}>
-        <label className="field grow"><span>New activity type</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder="Cricket" /></label>
-        <ColorPicker value={color} onChange={setColor} />
-        <button className="btn btn-primary" disabled={busy || !name.trim()}>Add</button>
-      </form>
-
-      <ul className="card list">
-        {list.length === 0 && <li className="empty">{showArchived ? "No archived activity types." : "No activity types yet. Add Cricket, Hospital Appointment or Movie Time to get started."}</li>}
-        {list.map((t) =>
-          editing?.id === t.id ? (
-            <li key={t.id} className="list-row is-editing">
-              <input aria-label="Name" value={editing.name} onChange={(e) => setEditing({ ...editing, name: e.target.value })} />
-              <ColorPicker value={editing.color} onChange={(c) => setEditing({ ...editing, color: c })} />
-              <button className="btn btn-primary btn-sm" onClick={saveEdit}>Save</button>
-              <button className="btn btn-ghost btn-sm" onClick={() => setEditing(null)}>Cancel</button>
+      <section className="kit">
+        <div className="kit-head">
+          <h1>Activities</h1>
+          {archived > 0 && <button className="link" onClick={() => { setShowArchived(!showArchived); setDraft(null); }}>{showArchived ? "Back to active" : `${archived} archived`}</button>}
+        </div>
+        <ul className="kit-row kit-chips">
+          {list.map((t) => (
+            <li key={t.id}>
+              {/* An archived chip restores on a press; an active one opens for editing. */}
+              <button className={`kit-token is-act act-${t.color} ${draft?.id === t.id ? "is-open" : ""} ${t.archived_at ? "is-archived" : ""}`} aria-label={t.archived_at ? `Restore ${t.name}` : `Edit ${t.name}`} aria-expanded={t.archived_at ? undefined : draft?.id === t.id}
+                onClick={() => (t.archived_at ? archive(t, false) : draft?.id === t.id ? setDraft(null) : setDraft({ id: t.id, name: t.name, color: t.color }))}>
+                <span className="swatch" aria-hidden /><span className="kit-name">{t.name}</span>
+              </button>
             </li>
-          ) : (
-            <li key={t.id} className="list-row">
-              <span className={`type-label act-${t.color}`}><span className="swatch" aria-hidden />{t.name}</span>
-              <span className="row-actions">
-                {!t.archived_at && <button className="btn btn-ghost btn-sm" onClick={() => setEditing(t)}>Rename</button>}
-                <button className="btn btn-ghost btn-sm" onClick={() => archive(t, !t.archived_at)}>{t.archived_at ? "Restore" : "Archive"}</button>
-              </span>
+          ))}
+          {!showArchived && (
+            <li>
+              <button className={`kit-token kit-add ${draft && !draft.id ? "is-open" : ""}`} aria-expanded={!!draft && !draft.id} onClick={() => (draft && !draft.id ? setDraft(null) : fresh())}>
+                <span className="kit-add-mark"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg></span>
+                <span className="kit-add-text">{list.length ? "Add activity" : "Add your first activity"}</span>
+              </button>
             </li>
-          ),
+          )}
+          {showArchived && <li className="hint kit-note">Press one to bring it back.</li>}
+        </ul>
+        {draft && (
+          <form className="card form kit-form" onSubmit={save} noValidate>
+            <label className="field"><span>Name</span><input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} placeholder="Cricket" autoFocus /></label>
+            <div className="field"><span>Colour</span><ColorPicker value={draft.color} onChange={(color) => setDraft({ ...draft, color })} /></div>
+            <div className="form-actions">
+              <button className="btn btn-primary" disabled={busy || !draft.name.trim()}>{busy ? "Saving…" : "Save activity"}</button>
+              <button type="button" className="btn btn-ghost" onClick={() => setDraft(null)}>Cancel</button>
+              {editing && <button type="button" className="btn btn-ghost kit-archive" onClick={() => archive(editing, true)}>Archive</button>}
+            </div>
+          </form>
         )}
-      </ul>
-      <button className="link" onClick={() => setShowArchived(!showArchived)}>{showArchived ? "Show active" : "Show archived"}</button>
+        <p className="hint">Two appointments of one activity can never overlap. Different activities can, after a warning.</p>
+      </section>
     </div>
   );
 }
