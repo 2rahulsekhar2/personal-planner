@@ -374,6 +374,8 @@ button.avatar:hover { background: var(--accent-hover); }
 .day-task.is-overdue .day-task-when { color: var(--danger); font-weight: 600; }
 .day-task.is-done .day-task-check { border-color: var(--ok); background: var(--ok); cursor: default; }
 .day-task.is-done .day-task-title { color: var(--muted); text-decoration: line-through; }
+/* A bill can be unticked again, unlike a finished task. */
+.day-bill.is-done .day-task-check:not(:disabled) { cursor: pointer; }
 .agenda-heading { font-size: 22px; margin: 4px 0 16px; }
 .agenda-heading .muted { font-size: 15px; font-weight: 400; margin-left: 6px; }
 .agenda-list { display: flex; flex-direction: column; gap: 8px; }
@@ -655,6 +657,26 @@ p.outcome-reason { display: block; }
 .money-ledger .is-total { border-top: 1px solid var(--line-2); padding-top: 8px; font-weight: 700; }
 .money-ledger .is-total dt { color: var(--ink); }
 .card .money-lines.card, .card > .empty.card { box-shadow: none; }
+/* Insights. A list of amounts, each with a bar scaled to the largest in its list. */
+.money-bars, .money-year { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; font-variant-numeric: tabular-nums; }
+.money-bars { gap: 12px; }
+.money-bar { display: flex; flex-direction: column; gap: 5px; }
+.money-bar-head { display: flex; justify-content: space-between; gap: 12px; }
+.money-bar-track { height: 6px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.money-bar-track span { display: block; height: 100%; border-radius: 3px; background: var(--accent); }
+.money-bar.is-short .money-bar-track span { background: var(--danger); }
+.money-bar.is-short strong { color: var(--danger); }
+/* The year ahead: a row a month. Income over expenses, on one scale, so a month where the lower bar is longer stands out. */
+.money-year { gap: 8px; }
+.money-year li { display: grid; grid-template-columns: 72px 1fr auto; align-items: center; gap: 12px; }
+.money-year-month { color: var(--ink-2); font-size: 13px; }
+.money-year-bars { display: flex; flex-direction: column; gap: 2px; }
+.money-year-bars span { height: 5px; min-width: 2px; border-radius: 3px; }
+.money-year-bars .is-in { background: var(--ok); }
+.money-year-bars .is-out { background: var(--accent); }
+.money-year li.is-short .is-out { background: var(--danger); }
+.money-year-left { font-weight: 600; text-align: right; }
+.money-year li.is-short .money-year-left { color: var(--danger); }
 @media (max-width: 599px) {
   .money-sum { grid-template-columns: 1fr 1fr; }
   .money-sum > div:last-child { grid-column: 1 / -1; padding-top: 12px; border-top: 1px solid var(--line); }

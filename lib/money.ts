@@ -145,6 +145,39 @@ export function bankPosition(bank: Pick<Bank, "id" | "balance">, lines: Line[]) 
   return { incomeDue, expenseDue, after: round2(Number(bank.balance) + incomeDue - expenseDue) };
 }
 
+/** What falls due on one day: lines with a single date in the month. A daily or weekly item is a month's running total, not a bill for a day. */
+export const linesDueOn = (lines: Line[], date: string) => lines.filter((l) => !l.skipped && l.dates.length === 1 && l.dates[0] === date);
+
+export interface Share { id: string | null; amount: number }
+/** A month's spending for each person: a line's amount splits equally between the people it is for. `id` null gathers lines for nobody in particular. Largest first. */
+export function byPerson(lines: Line[], kind: MoneyKind = "expense"): Share[] {
+  const sums = new Map<string | null, number>();
+  for (const l of lines) {
+    if (l.item.kind !== kind || l.skipped) continue;
+    const who: (string | null)[] = l.item.person_ids.length ? l.item.person_ids : [null];
+    for (const id of who) sums.set(id, (sums.get(id) ?? 0) + expected(l) / who.length);
+  }
+  return [...sums].map(([id, amount]) => ({ id, amount: round2(amount) })).sort((a, b) => b.amount - a.amount);
+}
+
+export interface TypeSum extends Totals { id: string | null }
+/** A month for each type: budgeted, really paid so far, and still to come. `id` null gathers lines without a type. Largest budget first. */
+export function byType(lines: Line[], kind: MoneyKind = "expense"): TypeSum[] {
+  const ids = [...new Set(lines.filter((l) => l.item.kind === kind && !l.skipped).map((l) => l.item.type_id))];
+  return ids.map((id) => ({ id, ...totals(lines.filter((l) => l.item.type_id === id), kind) })).sort((a, b) => b.budget - a.budget);
+}
+
+/** The months ahead by the plan: each month's budgeted income and expenses, yearly increases and one-month changes included. */
+export function forecast(items: MoneyItem[], entries: MoneyEntry[], increases: Increase[], fromYm: string, months = 12) {
+  return Array.from({ length: months }, (_, n) => {
+    const ym = shiftMonth(fromYm, n);
+    const lines = monthLines(items, entries, increases, ym);
+    const income = totals(lines, "income").budget;
+    const expense = totals(lines, "expense").budget;
+    return { ym, income, expense, left: round2(income - expense) };
+  });
+}
+
 const whole = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
 const paise = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 2 });
 /** Rupees, grouped the Indian way: ₹1,25,000. Paise show only when there are some. */
