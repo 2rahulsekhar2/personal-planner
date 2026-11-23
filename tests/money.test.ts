@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { amountOn, bankPosition, byPerson, byType, forecast, linesDueOn, waitingOn, datesInMonth, monthLines, parseAmount, shiftMonth, totals, type MoneyEntry, type MoneyItem } from "@/lib/money";
+import { amountIn, amountOn, amountPeriods, bankPosition, byPerson, byType, forecast, linesDueOn, waitingOn, datesInMonth, monthLines, parseAmount, shiftMonth, totals, type MoneyEntry, type MoneyItem } from "@/lib/money";
 
 const item = (over: Partial<MoneyItem>): MoneyItem => ({
   id: "i1", kind: "expense", name: "Wifi bill", amount: 1000, freq: "monthly", start_date: "2026-01-15", end_date: null,
@@ -134,5 +134,48 @@ describe("insights", () => {
     // December: wifi 1200 + school 5000 + milk 31 x 50 + EMI 10000. February 2027: 28 days of milk, and the EMI is 11000.
     expect(f[0]).toEqual({ ym: "2026-12", income: 60000, expense: 17750, left: 42250 });
     expect(f[2].expense).toBe(1200 + 5000 + 28 * 50 + 11000);
+  });
+});
+
+describe("an amount that changes from a date", () => {
+  // Salary: 2,00,000 from February 2025, 2,25,000 from April 2026, 2,50,000 from April 2027.
+  const pay = item({ id: "pay", kind: "income", amount: 200000, start_date: "2025-02-01", amount_steps: [{ from: "2027-04-01", amount: 250000 }, { from: "2026-04-01", amount: 225000 }] });
+
+  it("uses the amount in force on the date, whatever order the changes are stored in", () => {
+    expect(amountIn(pay, "2026-03-31")).toEqual({ amount: 200000, since: "2025-02-01" });
+    expect(amountIn(pay, "2026-04-01")).toEqual({ amount: 225000, since: "2026-04-01" });
+    expect(amountIn(pay, "2028-01-01")).toEqual({ amount: 250000, since: "2027-04-01" });
+  });
+  it("lists the stretches, each ending the day before the next", () => {
+    expect(amountPeriods(pay)).toEqual([
+      { from: "2025-02-01", to: "2026-03-31", amount: 200000 },
+      { from: "2026-04-01", to: "2027-03-31", amount: 225000 },
+      { from: "2027-04-01", to: null, amount: 250000 },
+    ]);
+    expect(amountPeriods({ ...pay, end_date: "2027-12-31" })[2].to).toBe("2027-12-31");
+  });
+  it("shows the new amount in the month it starts, and in a forecast across the change", () => {
+    expect(monthLines([pay], [], [], "2026-03")[0].budget).toBe(200000);
+    expect(monthLines([pay], [], [], "2026-04")[0].budget).toBe(225000);
+    expect(forecast([pay], [], [], "2026-02", 4).map((m) => m.income)).toEqual([200000, 200000, 225000, 225000]);
+  });
+  it("splits a daily item's month at the change", () => {
+    // Milk: 50 a day, 60 a day from the 11th. April has 10 days at 50 and 20 at 60.
+    const milk = item({ freq: "daily", amount: 50, start_date: "2026-01-01", amount_steps: [{ from: "2026-04-11", amount: 60 }] });
+    expect(monthLines([milk], [], [], "2026-04")[0].budget).toBe(10 * 50 + 20 * 60);
+  });
+  it("counts a yearly increase from when the amount in force began", () => {
+    const emi = item({ amount: 10000, start_date: "2025-04-05", amount_steps: [{ from: "2026-10-05", amount: 15000 }] });
+    expect(amountOn(emi, "2026-04-05", 10)).toBe(11000); // a year on the first amount
+    expect(amountOn(emi, "2026-10-05", 10)).toBe(15000); // the change is taken as given
+    expect(amountOn(emi, "2027-10-05", 10)).toBe(16500); // a year on the second
+  });
+  it("still lets one month's own figure win", () => {
+    const entries: MoneyEntry[] = [{ item_id: "pay", month: "2026-04-01", budget: 210000, actual: null, paid_at: null, skipped: false }];
+    expect(monthLines([pay], entries, [], "2026-04")[0]).toMatchObject({ rule: 225000, budget: 210000 });
+  });
+  it("ignores a change dated on or before the first date, and an item with none", () => {
+    expect(amountIn(item({ amount: 500, start_date: "2026-01-15", amount_steps: [{ from: "2026-01-15", amount: 900 }] }), "2026-06-01").amount).toBe(500);
+    expect(amountIn(item({ amount: 500, amount_steps: null }), "2026-06-01").amount).toBe(500);
   });
 });

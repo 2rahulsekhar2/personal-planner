@@ -3,9 +3,10 @@ import { useState } from "react";
 import type { PlannerCtx } from "./usePlanner";
 import type { MoneyCtx } from "./useMoney";
 import Select from "./Select";
-import { FREQ_LABELS, inr, monthLabel, parseAmount, type Line, type MoneyFreq, type MoneyItem, type MoneyKind, type Proposal } from "@/lib/money";
+import { amountPeriods, FREQ_LABELS, inr, monthLabel, parseAmount, type Line, type MoneyFreq, type MoneyItem, type MoneyKind, type Proposal } from "@/lib/money";
 import { isCurrent, type Circle } from "@/lib/circles";
 import { todayISO } from "@/lib/time";
+import { DateTime } from "luxon";
 
 const NONE = { value: "", label: "None" };
 
@@ -22,6 +23,8 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
   const [kind, setKind] = useState<MoneyKind>(from?.kind ?? startKind ?? "expense");
   const [name, setName] = useState(from?.name ?? "");
   const [amount, setAmount] = useState(from?.amount != null ? String(from.amount) : "");
+  // Later changes of the amount, each from a date on, as typed.
+  const [steps, setSteps] = useState<{ from: string; amount: string }[]>(() => [...(from?.amount_steps ?? [])].sort((a, b) => a.from.localeCompare(b.from)).map((x) => ({ from: x.from, amount: String(x.amount) })));
   const [freq, setFreq] = useState<MoneyFreq>(from?.freq ?? "monthly");
   const [start, setStart] = useState(from?.start_date ?? todayISO(ctx.tz));
   const [end, setEnd] = useState(from?.end_date ?? "");
@@ -40,6 +43,14 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
   const family = money.people.filter((p) => !p.archived_at || people.includes(p.id));
   const expense = kind === "expense";
   const value = parseAmount(amount);
+  // The stretches as they stand in the form, for saying "to 31 Mar 2026" beside each and marking the one in force today.
+  const fmtDay = (iso: string) => DateTime.fromISO(iso).toFormat("d LLL yyyy");
+  const periods = start ? amountPeriods({ amount: value ?? 0, start_date: start, end_date: end || null, amount_steps: steps.filter((x) => x.from > start).map((x) => ({ from: x.from, amount: parseAmount(x.amount) ?? 0 })) }) : [];
+  const untilOf = (from: string) => { const p = periods.find((x) => x.from === from); return p?.to ? `, to ${fmtDay(p.to)}` : p ? ", onwards" : ""; };
+  const todayIso = todayISO(ctx.tz);
+  // Which row is in force today: 0 is the first amount, n + 1 the nth change as listed.
+  const nowFrom = [...periods].reverse().find((p) => p.from <= todayIso)?.from;
+  const nowAt = nowFrom === undefined ? -1 : nowFrom === start ? 0 : steps.findIndex((x) => x.from === nowFrom) + 1;
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -48,10 +59,19 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
     if (value === null) return setError("Enter the amount as a number, for example 1499.");
     if (!start) return setError("Choose a date.");
     if (freq !== "once" && end && end < start) return setError("The last date is before the first.");
+    // A one-time item has one amount. Otherwise each change needs a date after the first date, its own day, and a figure.
+    const changes = freq === "once" ? [] : steps.map((x) => ({ from: x.from, amount: parseAmount(x.amount) }));
+    if (changes.some((x) => !x.from || x.amount === null)) return setError("Give each change of amount a date and a figure, or remove it.");
+    if (changes.some((x) => x.from <= start)) return setError("A change of amount must start after the first date. To change the first amount, edit it directly.");
+    if (end && changes.some((x) => x.from > end)) return setError("A change of amount starts after the last date.");
+    if (new Set(changes.map((x) => x.from)).size !== changes.length) return setError("Two changes of amount start on the same day.");
+    changes.sort((a, b) => a.from.localeCompare(b.from));
     setSaving(true);
     const row = {
       kind, name: name.trim(), amount: value, freq, start_date: start, end_date: freq === "once" ? null : end || null,
       bank_id: bank || null, type_id: type || null, increase_id: freq === "once" ? null : increase || null, person_ids: people, notes: notes.trim() || null,
+      // Sent only when the database has the column (0020).
+      ...(money.steps ? { amount_steps: changes } : {}),
     };
     const result = scope ? await ask(existing ? "change" : "add", row) : existing ? await supabase.from("money_items").update(row).eq("id", existing.id) : await supabase.from("money_items").insert(row);
     setSaving(false);
@@ -90,16 +110,35 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
         ))}
       </div>
       <label className="field"><span>Name</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder={expense ? "Wifi bill" : "Salary"} autoFocus={!existing} /></label>
-      <label className="field">
-        <span>Budget amount{freq !== "once" && <span className="muted"> (each time)</span>}</span>
-        <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="₹" aria-invalid={!!amount && value === null} />
-        <span className="hint">The amount you plan for. What you really {expense ? "pay" : "receive"} is recorded month by month.</span>
-      </label>
       <label className="field"><span>Repeats</span><Select id="money-freq" value={freq} options={Object.entries(FREQ_LABELS).map(([v, label]) => ({ value: v, label }))} onChange={(v) => setFreq(v as MoneyFreq)} /></label>
       <div className="field-row">
         <label className="field"><span>{freq === "once" ? "Date" : "First date"}</span><input type="date" value={start} onChange={(e) => setStart(e.target.value)} /></label>
         {freq !== "once" && <label className="field"><span>Last date <span className="muted">(optional)</span></span><input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label>}
       </div>
+      {/* The amount, and how it changes over time: a row for each stretch, the first from the first date. */}
+      <fieldset className="field">
+        <legend>Budget amount{freq !== "once" && <span className="muted"> (each time)</span>}</legend>
+        <div className="amt-steps">
+          <div className={`amt-step ${periods.length > 1 && nowAt === 0 ? "is-now" : ""}`}>
+            <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="₹" aria-label={freq === "once" || !steps.length ? "Budget amount" : "Amount from the first date"} aria-invalid={!!amount && value === null} />
+            {freq !== "once" && steps.length > 0 && <span className="amt-when">from {fmtDay(start)}{periods[0]?.to ? `, to ${fmtDay(periods[0].to)}` : ""}</span>}
+          </div>
+          {freq !== "once" && steps.map((x, n) => (
+            <div key={n} className={`amt-step ${nowAt === n + 1 ? "is-now" : ""}`}>
+              <input value={x.amount} onChange={(e) => setSteps(steps.map((y, m) => (m === n ? { ...y, amount: e.target.value } : y)))} inputMode="decimal" placeholder="₹" aria-label={`Amount from change ${n + 1}`} aria-invalid={!!x.amount && parseAmount(x.amount) === null} />
+              <span className="amt-when">
+                from <input type="date" className="input-inline" value={x.from} min={start} max={end || undefined} aria-label={`Change ${n + 1} starts on`} onChange={(e) => setSteps(steps.map((y, m) => (m === n ? { ...y, from: e.target.value } : y)))} />
+                {x.from && untilOf(x.from)}
+              </span>
+              <button type="button" className="icon-btn" aria-label={`Remove change ${n + 1}`} title="Remove" onClick={() => setSteps(steps.filter((_, m) => m !== n))}>✕</button>
+            </div>
+          ))}
+        </div>
+        {freq !== "once" && money.steps && (
+          <button type="button" className="chip chip-dashed amt-add" onClick={() => setSteps([...steps, { from: "", amount: "" }])}>＋ Change the amount from a date</button>
+        )}
+        <span className="hint">{steps.length && freq !== "once" ? "Each amount holds until the next one starts." : `What you plan for. What you really ${expense ? "pay" : "receive"} is recorded month by month.`}</span>
+      </fieldset>
       <label className="field"><span>Bank</span><Select id="money-bank" value={bank} options={offer(money.banks, bank)} onChange={setBank} /></label>
       <label className="field"><span>{expense ? "Expense type" : "Income type"}</span><Select id="money-type" value={type} options={offer(money.types.filter((t) => t.kind === kind), type)} onChange={setType} /></label>
       {freq !== "once" && (
