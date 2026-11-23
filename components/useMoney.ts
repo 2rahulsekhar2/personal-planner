@@ -13,7 +13,7 @@ const EMPTY = {
   banks: [] as Bank[], types: [] as MoneyType[], increases: [] as Increase[], people: [] as Person[], items: [] as MoneyItem[], entries: [] as MoneyEntry[],
   months: [] as PlannedMark[], proposals: [] as Proposal[], approvals: [] as { proposal_id: string; user_id: string }[],
   family: [] as string[], // circles whose family plan is on
-  shared: false, // true once the database has shared budgets (0016_money_shared.sql)
+  shared: false, // true once the database has shared budgets (0017_money_shared.sql)
 };
 
 /** Everything the Money side needs: whether it is on, the mode last used, and every budget this person can read. */
@@ -27,7 +27,7 @@ export function useMoney(ctx: PlannerCtx) {
   const load = useCallback(async () => {
     if (!userId) return;
     const subs = (shared: boolean) => supabase.from("subscriptions").select(shared ? "status, circle_id" : "status").eq("product", "money").eq("status", "active");
-    // Newest shape first; without 0016 the sharing columns do not exist, so fall back to the private budget.
+    // Newest shape first; without 0017 the sharing columns do not exist, so fall back to the private budget.
     let shared = true;
     let sub = await subs(true);
     if (sub.error) {
@@ -40,6 +40,16 @@ export function useMoney(ctx: PlannerCtx) {
     const active = (sub.data ?? []) as unknown as { circle_id?: string | null }[];
     if (!active.length) return setStatus("off");
     const c = shared ? ", circle_id" : "";
+    // The API returns at most 1000 rows a request, and an imported budget has more month entries than that.
+    const allEntries = async () => {
+      const rows: MoneyEntry[] = [];
+      for (;;) {
+        const page = await supabase.from("money_entries").select("item_id, month, budget, actual, paid_at, skipped").order("item_id").order("month").range(rows.length, rows.length + 999);
+        if (page.error) return { data: rows, error: page.error };
+        rows.push(...(page.data as MoneyEntry[]));
+        if (page.data.length < 1000) return { data: rows, error: null };
+      }
+    };
     // shortcut: loads every item and month entry at once, fine for one household; load entries by month range if this grows past a few thousand rows
     const [banks, types, increases, people, items, entries, months, proposals, approvals] = await Promise.all([
       supabase.from("money_banks").select(`id, user_id, name, balance, balance_at, archived_at${c}`).order("name"),
@@ -47,7 +57,7 @@ export function useMoney(ctx: PlannerCtx) {
       supabase.from("money_increases").select(`id, name, percent, archived_at${c}`).order("percent"),
       supabase.from("money_people").select(`id, name, relationship, archived_at${shared ? ", circle_id, member_id" : ""}`).order("created_at"),
       supabase.from("money_items").select(`id, kind, name, amount, freq, start_date, end_date, bank_id, type_id, increase_id, person_ids, notes${c}`).order("name"),
-      supabase.from("money_entries").select("item_id, month, budget, actual, paid_at, skipped"),
+      allEntries(),
       supabase.from("money_months").select(`month, user_id${c}`),
       shared ? supabase.from("money_proposals").select("id, circle_id, item_id, action, payload, created_by, status, reason").in("status", ["pending", "rejected"]).order("created_at") : { data: [], error: null },
       shared ? supabase.from("money_approvals").select("proposal_id, user_id") : { data: [], error: null },

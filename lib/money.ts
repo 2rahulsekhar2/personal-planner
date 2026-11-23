@@ -3,8 +3,8 @@ import { DateTime } from "luxon";
 export type MoneyKind = "income" | "expense";
 export type MoneyFreq = "once" | "daily" | "weekly" | "monthly" | "yearly";
 
-// circle_id on every row: null is private, otherwise the circle it is shared with. Absent until 0016_money_shared.sql has been run.
-export interface Bank { id: string; user_id: string; circle_id?: string | null; name: string; balance: number; balance_at: string | null; archived_at: string | null }
+// circle_id on every row: null is private, otherwise the circle it is shared with. Absent until 0017_money_shared.sql has been run.
+export interface Bank { id: string; user_id?: string; circle_id?: string | null; name: string; balance: number; balance_at: string | null; archived_at: string | null }
 export interface MoneyType { id: string; circle_id?: string | null; name: string; kind: MoneyKind; archived_at: string | null }
 export interface Increase { id: string; circle_id?: string | null; name: string; percent: number; archived_at: string | null }
 /** member_id: this person is also that member of the circle. */

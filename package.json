@@ -12,6 +12,7 @@
   "dependencies": {
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.119.0",
+    "exceljs": "^4.4.0",
     "luxon": "^3.7.2",
     "next": "^15.5.29",
     "nodemailer": "^7.0.13",

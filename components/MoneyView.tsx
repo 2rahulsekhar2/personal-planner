@@ -333,7 +333,7 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
                   const out = lines.filter((l) => l.item.bank_id === b.id && l.item.kind === "expense");
                   return (
                     <section key={b.id} className="card stack">
-                      <div className="page-head"><h2>{b.name}</h2><span className="muted">{b.balance_at ? `Balance as of ${DateTime.fromISO(b.balance_at).toFormat("d LLL")}` : "Balance not set"}{scope ? `, kept by ${nameOf(scope, b.user_id, ctx.userId).replace("You", "you")}` : ""}</span></div>
+                      <div className="page-head"><h2>{b.name}</h2><span className="muted">{b.balance_at ? `Balance as of ${DateTime.fromISO(b.balance_at).toFormat("d LLL")}` : "Balance not set"}{scope ? `, kept by ${nameOf(scope, b.user_id ?? "", ctx.userId).replace("You", "you")}` : ""}</span></div>
                       <dl className="money-ledger">
                         <div><dt>Balance</dt><dd>{inr(Number(b.balance))}</dd></div>
                         <div><dt>Income still to come</dt><dd>+ {inr(pos.incomeDue)}</dd></div>
