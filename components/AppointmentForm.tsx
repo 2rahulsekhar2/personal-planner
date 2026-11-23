@@ -14,6 +14,8 @@ import { fmtRange, todayISO, toInterval } from "@/lib/time";
 import { choiceFromSeries, expandRule, storedRule, toRule, NO_REPEAT, type RepeatChoice } from "@/lib/recurrence";
 import RepeatPicker from "./RepeatPicker";
 import { isGoogleMapsUrl } from "@/lib/maps";
+import DayBar from "./DayBar";
+import { Named } from "./FormBits";
 
 interface OccReview {
   date: string;
@@ -412,6 +414,11 @@ export default function AppointmentForm({
   const mins = interval.valid ? Math.round(interval.end.diff(interval.start, "minutes").minutes) : 0;
   const length = mins <= 0 ? "" : `${mins >= 60 ? `${Math.floor(mins / 60)} h` : ""}${mins % 60 ? ` ${mins % 60} min` : ""}`.trim();
 
+  // What else is on the chosen day, so the bar under the times can show where this one falls among them.
+  const dayStart = DateTime.fromISO(date, { zone: tz }).startOf("day");
+  const sameDay = ctx.appointments.filter((a) => a.id !== existing?.id && a.status !== "cancelled" && !a.busy
+    && DateTime.fromISO(a.starts_at) < dayStart.plus({ days: 1 }) && DateTime.fromISO(a.ends_at) > dayStart);
+
   return (
     <form className="form" onSubmit={(e) => { e.preventDefault(); submit(); }} noValidate>
       {/* The appointment as it will look, filling in as you choose. The title is edited right on it. */}
@@ -441,7 +448,7 @@ export default function AppointmentForm({
 
       {existing?.series_id && (
         <fieldset className="field">
-          <legend>Apply changes to</legend>
+          <legend><Named icon="repeat">Apply changes to</Named></legend>
           <div className="segmented">
             <button type="button" className={scope === "one" ? "is-active" : ""} aria-pressed={scope === "one"} onClick={() => setScope("one")}>This appointment</button>
             <button type="button" className={scope === "series" ? "is-active" : ""} aria-pressed={scope === "series"} onClick={() => setScope("series")}>This and following</button>
@@ -450,7 +457,7 @@ export default function AppointmentForm({
       )}
 
       <fieldset className="field">
-        <legend>Activity</legend>
+        <legend><Named icon="tag">Activity</Named></legend>
         {/* One line to type a one-off, with the saved activities as small picks under it. */}
         <input
           value={type?.name ?? customActivity ?? ""}
@@ -467,7 +474,7 @@ export default function AppointmentForm({
           ))}
           {!newType && <button type="button" className="chip chip-dashed" onClick={() => setNewType(blankType())}>＋ Save a new one</button>}
         </div>
-        {!typeId && customActivity?.trim() && <p className="hint">Just for this appointment. It is not added to your activities.</p>}
+        {!typeId && customActivity?.trim() && <p className="hint">Only for this one. Not saved to your activities.</p>}
         {newType && (
           <div className="subform">
             <label className="field"><span>Activity name</span><input value={newType.name} onChange={(e) => setNewType({ ...newType, name: e.target.value })} placeholder="Cricket" autoFocus /></label>
@@ -481,7 +488,7 @@ export default function AppointmentForm({
       </fieldset>
 
       <fieldset className="field">
-        <legend>When</legend>
+        <legend><Named icon="clock">When</Named></legend>
         <div className="chips">
           <button type="button" disabled={inSeriesScope} className={`chip ${date === today ? "is-selected" : ""}`} aria-pressed={date === today} onClick={() => setDate(today)}>Today</button>
           <button type="button" disabled={inSeriesScope} className={`chip ${date === tomorrow ? "is-selected" : ""}`} aria-pressed={date === tomorrow} onClick={() => setDate(tomorrow)}>Tomorrow</button>
@@ -493,11 +500,13 @@ export default function AppointmentForm({
           <span className="muted">to</span>
           <input type="time" required aria-label="End" value={end} onChange={(e) => setEnd(e.target.value)} />
         </div>
+        {/* The day as a bar: what is already booked, and this appointment outlined among it. */}
+        {interval.valid && <DayBar appts={sameDay} typeById={typeById} day={date} tz={tz} ghost={{ from: interval.start, to: interval.end }} />}
       </fieldset>
       {interval.valid && interval.nextDay && start !== end && <p className="hint">Ends the next day, {interval.end.toFormat("ccc d LLL, h:mm a")}.</p>}
 
       <fieldset className="field">
-        <legend>Place</legend>
+        <legend><Named icon="pin">Place</Named></legend>
         <input
           value={place?.name ?? customPlace ?? ""}
           onChange={(e) => { setPlaceId(""); setCustomPlace(e.target.value); }}
@@ -511,7 +520,7 @@ export default function AppointmentForm({
           ))}
           {!newPlace && <button type="button" className="chip chip-dashed" onClick={() => setNewPlace({ name: "", url: "" })}>＋ Save a new one</button>}
         </div>
-        {!placeId && customPlace?.trim() && <p className="hint">Just for this appointment. It is not added to your places.</p>}
+        {!placeId && customPlace?.trim() && <p className="hint">Only for this one. Not saved to your places.</p>}
         {newPlace && (
           <div className="subform">
             <label className="field"><span>Place name</span><input value={newPlace.name} onChange={(e) => setNewPlace({ ...newPlace, name: e.target.value })} placeholder="Riverside Ground" /></label>
@@ -526,7 +535,7 @@ export default function AppointmentForm({
 
       {ctx.sharing && circles.length > 0 && (
         <fieldset className="field">
-          <legend>Share with</legend>
+          <legend><Named icon="people">Share with</Named></legend>
           <div className="chips chips-xs" style={{ marginTop: 0 }}>
             <button type="button" className={`chip ${!circleId ? "is-selected" : ""}`} aria-pressed={!circleId} onClick={() => share("")}>Just me</button>
             {circles.map((c) => (
@@ -543,14 +552,14 @@ export default function AppointmentForm({
             </div>
           )}
           {circleId && <span className="hint">{busyOnly && ctx.replies
-            ? `Everyone in ${circles.find((c) => c.id === circleId)?.name} sees that you are busy at this time, and nothing else about it.`
-            : `Everyone in ${circles.find((c) => c.id === circleId)?.name} can see this. Only you can change it.`}</span>}
+            ? `${circles.find((c) => c.id === circleId)?.name} sees only that you are busy then.`
+            : `Everyone in ${circles.find((c) => c.id === circleId)?.name} sees it. Only you can change it.`}</span>}
         </fieldset>
       )}
 
       {ctx.people && circleId && others.length > 0 && !(busyOnly && ctx.replies) && (
         <fieldset className="field">
-          <legend>Who is going</legend>
+          <legend><Named icon="people">Who is going</Named></legend>
           <div className="chips chips-xs" style={{ marginTop: 0 }}>
             <span className="chip is-selected going-you">You</span>
             {others.map((m) => {
@@ -565,33 +574,40 @@ export default function AppointmentForm({
           {busy.map((b) => (
             <span key={b.user_id + b.starts_at} className="hint busy-note">{others.find((m) => m.user_id === b.user_id)?.email.split("@")[0] ?? "Someone"} is busy {fmtRange(b.starts_at, b.ends_at, tz)}.</span>
           ))}
-          {going.length > 0 && <span className="hint">It shows in their calendar, and each gets a reminder by their own setting.</span>}
+          {going.length > 0 && <span className="hint">It goes in their calendar too, with their own reminder.</span>}
         </fieldset>
       )}
 
-      <label className="field"><span>Notes <span className="muted">(optional)</span></span><textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Anything to remember: what to bring, who to call" /></label>
+      <label className="field"><span><Named icon="note">Notes</Named></span><textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="What to bring, who to call" /></label>
 
-      <button type="button" className="disclosure" aria-expanded={more} onClick={() => setMore(!more)}>
-        {more ? "▾" : "▸"} More options
-        {!more && <span className="muted"> · {status === "tentative" ? "Tentative" : "Confirmed"}, {reminderLabel(reminder).toLowerCase()}{repeat ? ", repeats" : ""}</span>}
+      {/* Folded, the three settings inside show as chips, so nothing has to be opened just to check it. */}
+      <button type="button" className="disclosure more-toggle" aria-expanded={more} onClick={() => setMore(!more)}>
+        <span>{more ? "▾" : "▸"} More</span>
+        {!more && (
+          <span className="chips chips-xs">
+            <span className={`chip ${status === "tentative" ? "chip-dashed" : ""}`}>{status === "tentative" ? "Tentative" : "Confirmed"}</span>
+            <span className="chip"><Named icon="bell">{reminderLabel(reminder)}</Named></span>
+            {repeat && <span className="chip"><Named icon="repeat">Repeats</Named></span>}
+          </span>
+        )}
       </button>
 
       {more && (
         <div className="stack reveal" ref={moreRef}>
           {/* Each choice carries a sample of how the appointment will be drawn on the calendar: solid, or dashed. */}
           <fieldset className="field">
-            <legend>Status</legend>
+            <legend><Named icon="check">Status</Named></legend>
             <div className="status-pick">
-              {([["confirmed", "Confirmed", "Drawn solid on the calendar"], ["tentative", "Tentative", "Drawn dashed until you confirm"]] as const).map(([s, label, hint]) => (
+              {([["confirmed", "Confirmed"], ["tentative", "Tentative"]] as const).map(([s, label]) => (
                 <button type="button" key={s} className={`status-opt is-${s} ${status === s ? "is-selected" : ""}`} aria-pressed={status === s} onClick={() => setStatus(s)}>
                   <span className="status-sample" aria-hidden />
-                  <span><span className="add-label">{label}</span><span className="add-hint">{hint}</span></span>
+                  <span className="add-label">{label}</span>
                 </button>
               ))}
             </div>
           </fieldset>
           <fieldset className="field">
-            <legend>Reminder</legend>
+            <legend><Named icon="bell">Reminder</Named></legend>
             <ReminderPicker value={reminder} onChange={setReminder} />
           </fieldset>
 

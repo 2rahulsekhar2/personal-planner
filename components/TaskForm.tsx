@@ -7,6 +7,7 @@ import { isCurrent, seatsOf, type Circle } from "@/lib/circles";
 import { hhmm, isTaskOverdue, localToDateTime, todayISO } from "@/lib/time";
 import { expandRule, toRule, NO_REPEAT, type RepeatChoice } from "@/lib/recurrence";
 import RepeatPicker from "./RepeatPicker";
+import { Named } from "./FormBits";
 
 export default function TaskForm({ ctx, circles, circleId: startCircle, existing, date, time, onDone }: { ctx: PlannerCtx; circles: Circle[]; circleId?: string; existing?: Task; date?: string; time?: string; onDone: () => void }) {
   const { tz, supabase, refresh, toast } = ctx;
@@ -144,7 +145,7 @@ export default function TaskForm({ ctx, circles, circleId: startCircle, existing
       )}
       {inRun && (
         <fieldset className="field">
-          <legend>Apply changes to</legend>
+          <legend><Named icon="repeat">Apply changes to</Named></legend>
           <div className="segmented">
             <button type="button" className={scope === "one" ? "is-active" : ""} aria-pressed={scope === "one"} onClick={() => setScope("one")}>This task</button>
             <button type="button" className={scope === "series" ? "is-active" : ""} aria-pressed={scope === "series"} onClick={() => setScope("series")}>This and following</button>
@@ -152,33 +153,39 @@ export default function TaskForm({ ctx, circles, circleId: startCircle, existing
         </fieldset>
       )}
       <label className="field">
-        <span>Task</span>
+        <span><Named icon="check">Task</Named></span>
         <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Call Rahul" autoFocus={!existing} />
       </label>
+      {/* When it is due: the day, and a time if it has one, kept together. */}
       <fieldset className="field">
-        <legend>Due</legend>
+        <legend><Named icon="clock">Due</Named></legend>
         <div className="chips">
           <button type="button" className={`chip ${due === today ? "is-selected" : ""}`} aria-pressed={due === today} onClick={() => setDue(today)}>Today</button>
           <button type="button" className={`chip ${due === tomorrow ? "is-selected" : ""}`} aria-pressed={due === tomorrow} onClick={() => setDue(tomorrow)}>Tomorrow</button>
           <input type="date" aria-label="Due date" value={due} onChange={(e) => setDue(e.target.value)} className="input-inline" />
         </div>
+        <div className="row due-time">
+          <span className="muted">at</span>
+          <input type="time" aria-label="Due time, optional" className="input-inline" value={dueTime} onChange={(e) => setDueTime(e.target.value)} />
+          {dueTime ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDueTime("")}>No time</button> : <span className="muted">any time that day</span>}
+        </div>
       </fieldset>
       {ctx.sharing && circles.length > 0 && (
         <fieldset className="field">
-          <legend>Share with</legend>
+          <legend><Named icon="people">Share with</Named></legend>
           <div className="chips chips-xs" style={{ marginTop: 0 }}>
             <button type="button" className={`chip ${!circleId ? "is-selected" : ""}`} aria-pressed={!circleId} onClick={() => share("")}>Just me</button>
             {circles.map((c) => (
               <button type="button" key={c.id} className={`chip ${circleId === c.id ? "is-selected" : ""}`} aria-pressed={circleId === c.id} onClick={() => share(c.id)}>{c.name}</button>
             ))}
           </div>
-          {circleId && <span className="hint">Everyone in {circles.find((c) => c.id === circleId)?.name} can see this. Only you can change it.</span>}
+          {circleId && <span className="hint">Everyone in {circles.find((c) => c.id === circleId)?.name} sees it. Only you can change it.</span>}
         </fieldset>
       )}
 
       {ctx.people && circleId && members.length > 1 && (
         <fieldset className="field">
-          <legend>Who does it</legend>
+          <legend><Named icon="people">Who does it</Named></legend>
           <div className="chips chips-xs" style={{ marginTop: 0 }}>
             <button type="button" className={`chip ${!assignee ? "is-selected" : ""}`} aria-pressed={!assignee} onClick={() => setAssignee("")}>Anyone</button>
             {members.map((m) => (
@@ -191,15 +198,8 @@ export default function TaskForm({ ctx, circles, circleId: startCircle, existing
         </fieldset>
       )}
 
-      <label className="field">
-        <span>Due time <span className="muted">(optional)</span></span>
-        <div className="row">
-          <input type="time" value={dueTime} onChange={(e) => setDueTime(e.target.value)} />
-          {dueTime && <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDueTime("")}>Clear</button>}
-        </div>
-      </label>
       <fieldset className="field">
-        <legend>Notification</legend>
+        <legend><Named icon="bell">Reminder</Named></legend>
         <label className="check"><input type="checkbox" checked={notify} onChange={(e) => toggleNotify(e.target.checked)} /> Notify me</label>
         {notify && (
           <div className="field-row">
@@ -207,7 +207,7 @@ export default function TaskForm({ ctx, circles, circleId: startCircle, existing
             <label className="field"><span>Time</span><input type="time" value={notifyTime} onChange={(e) => setNotifyTime(e.target.value)} /></label>
           </div>
         )}
-        {notify && <p className="hint">Browser reminders can arrive a minute or so late. For time-critical tasks like Tatkal booking, set the notification a few minutes early.</p>}
+        {notify && <p className="hint">It can arrive a minute late. For something like Tatkal booking, set it a few minutes early.</p>}
       </fieldset>
       {!existing && <RepeatPicker value={rep} onChange={setRep} date={due} startTime="00:00" endTime="00:01" tz={tz} noun="task" />}
       {inRun && scope === "series" && (
@@ -218,7 +218,7 @@ export default function TaskForm({ ctx, circles, circleId: startCircle, existing
             : "The title, time, sharing and notes also go to the later tasks still pending. Their dates and notifications stay as they are."}</span>}
         />
       )}
-      <label className="field"><span>Notes <span className="muted">(optional)</span></span><textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} /></label>
+      <label className="field"><span><Named icon="note">Notes</Named></span><textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></label>
 
       {error && <div className="alert alert-error" role="alert">{error}</div>}
 
