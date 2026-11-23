@@ -267,7 +267,7 @@ function Requests({ ctx, money, scope, canEdit, onAgain }: { ctx: PlannerCtx; mo
 
   return (
     <section className="stack">
-      <div className="page-head"><h2>Waiting for approval</h2></div>
+      <div className="page-head"><h2>Requests</h2></div>
       <ul className="card list">
         {list.map((p) => {
           const item = money.items.find((i) => i.id === p.item_id);
