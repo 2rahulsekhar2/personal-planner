@@ -26,7 +26,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "That code is not right. Check the email and try again." }, { status: 400 });
   }
 
-  const sub = await admin.from("subscriptions").upsert({ user_id: auth.user.id, product: "money", plan: "personal", status: "active" }, { onConflict: "user_id,product" });
+  // Insert, or switch an ended one back on. Not an upsert: after 0017 the personal row is unique only through a partial index.
+  let sub = await admin.from("subscriptions").insert({ user_id: auth.user.id, product: "money", plan: "personal", status: "active" });
+  if (sub.error?.code === "23505") sub = await admin.from("subscriptions").update({ status: "active" }).eq("user_id", auth.user.id).eq("product", "money").eq("plan", "personal");
   if (sub.error) return NextResponse.json({ error: sub.error.message }, { status: 500 });
   await admin.from("money_codes").delete().eq("user_id", auth.user.id);
   return NextResponse.json({ ok: true });

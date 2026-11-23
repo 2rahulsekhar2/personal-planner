@@ -20,7 +20,9 @@ export async function POST(request: Request) {
   const month = String(form?.get("month") ?? "");
   const nowYm = /^\d{4}-(0[1-9]|1[0-2])$/.test(month) ? month : new Date().toISOString().slice(0, 7);
 
-  const banks = await supabase.from("money_banks").select("id, name, balance, balance_at, archived_at");
+  // Private banks only: a circle's bank of the same name must not lend its balance. Without 0017 every bank is private.
+  let banks = await supabase.from("money_banks").select("id, name, balance, balance_at, archived_at").is("circle_id", null);
+  if (banks.error) banks = await supabase.from("money_banks").select("id, name, balance, balance_at, archived_at");
   if (banks.error) return NextResponse.json({ error: banks.error.message }, { status: 500 });
   let parsed: ReturnType<typeof sheetToMoney>;
   try {
