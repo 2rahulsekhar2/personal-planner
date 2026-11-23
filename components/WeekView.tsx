@@ -1,11 +1,12 @@
 "use client";
-import { useCallback, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import SlotMenu, { type Slot } from "./SlotMenu";
 import { DateTime } from "luxon";
 import type { PlannerCtx } from "./usePlanner";
 import type { Appointment, Task } from "@/lib/types";
 import { fmtRange, fmtShortTime, weekFromToday, todayISO, fmtClock, isTaskOverdue } from "@/lib/time";
 
+const HOLD_MS = 450; // how long a finger must rest before its drag selects time instead of scrolling
 const TASK_PX = 18; // height a task chip takes in the grid, including its gap
 const MIN_APPT_PX = 15; // shortest an appointment is drawn, so it stays readable and tappable
 
@@ -112,10 +113,29 @@ export default function WeekView({
   // The whole day fits the window: each hour gets an equal share of the height left under the day headers.
   const gridRef = useRef<HTMLDivElement>(null);
   // The empty hour that was pressed, and where: it lights up in the grid and asks what to put there.
-  const [slot, setSlot] = useState<(Slot & { hour: number }) | null>(null);
+  // `from` and `to` are minutes into the day: a pressed hour, or a stretch dragged out with the mouse.
+  const [slot, setSlot] = useState<(Slot & { from: number; to: number }) | null>(null);
   const closeSlot = useCallback(() => setSlot(null), []);
+  // Dragging down (or up) an empty column marks out a stretch of time, in half-hour steps.
+  const [sel, setSel] = useState<{ iso: string; from: number; to: number } | null>(null);
+  const drag = useRef<{ iso: string; x0: number; y0: number; top: number; moved: boolean } | null>(null);
+  const hold = useRef<number | undefined>(undefined); // the press-and-hold timer on a touch screen
+  const dragged = useRef(false); // the click that ends a drag is not a press on an hour
+  const clockOf = (m: number) => DateTime.fromObject({ hour: Math.floor(m / 60) % 24, minute: m % 60 }).toFormat(m % 60 ? "h:mm a" : "h a");
+  const hhmmOf = (m: number) => `${pad(Math.floor(m / 60) % 24)}:${pad(m % 60)}`;
+  const lengthOf = (m: number) => `${m >= 60 ? `${Math.floor(m / 60)} h` : ""}${m >= 60 && m % 60 ? " " : ""}${m % 60 ? `${m % 60} min` : ""}`;
   const pad = (n: number) => String(n).padStart(2, "0");
   const [HOUR_PX, setHourPx] = useState(24);
+  // Where a pointer is in the day, in minutes, snapped to the half hour.
+  const minutesAt = (g: { top: number }, y: number) => Math.max(0, Math.min(1440, Math.round(((y - g.top) / HOUR_PX) * 2) * 30));
+  // While a finger is selecting, its movement must not scroll the grid. Only a non-passive touchmove listener can stop that.
+  useEffect(() => {
+    const el = gridRef.current;
+    if (!el) return;
+    const stop = (e: TouchEvent) => { if (drag.current?.moved && e.cancelable) e.preventDefault(); };
+    el.addEventListener("touchmove", stop, { passive: false });
+    return () => el.removeEventListener("touchmove", stop);
+  }, []);
   const hasScopeBar = !!scopeBar; // the scope bar adds a row above the grid
   useLayoutEffect(() => {
     const fit = () => {
@@ -189,15 +209,64 @@ export default function WeekView({
                 key={iso}
                 className={`week-col ${iso === today ? "is-today" : ""}`}
                 onClick={(e) => {
+                  if (dragged.current) return void (dragged.current = false);
                   if (e.target !== e.currentTarget) return;
                   const y = e.nativeEvent.offsetY;
                   const h = Math.min(23, startHour + Math.floor(y / HOUR_PX));
-                  setSlot({ iso, hour: h, start: `${pad(h)}:00`, end: `${pad((h + 1) % 24)}:00`, x: e.clientX, y: e.clientY });
+                  setSlot({ iso, from: h * 60, to: h * 60 + 60, start: `${pad(h)}:00`, end: `${pad((h + 1) % 24)}:00`, x: e.clientX, y: e.clientY });
                 }}
+                // A mouse or pen drags straight away. A finger must press and hold first, because a finger's drag is how the page scrolls.
+                onPointerDown={(e) => {
+                  if (e.target !== e.currentTarget || e.button !== 0) return;
+                  const el = e.currentTarget, id = e.pointerId;
+                  const g = { iso, x0: e.clientX, y0: e.clientY, top: el.getBoundingClientRect().top, moved: false };
+                  drag.current = g;
+                  if (e.pointerType !== "touch") return el.setPointerCapture(id); // keep following the pointer if it leaves the column
+                  hold.current = window.setTimeout(() => {
+                    if (drag.current !== g) return; // lifted, or moved off to scroll
+                    g.moved = true; // from here the finger selects; the touchmove listener above stops the scroll
+                    try { el.setPointerCapture(id); } catch { /* the touch ended this instant */ }
+                    navigator.vibrate?.(10);
+                    const from = Math.min(minutesAt(g, g.y0), 1380);
+                    setSlot(null);
+                    setSel({ iso, from, to: from + 60 }); // an hour to start with, as a held press alone should give
+                  }, HOLD_MS);
+                }}
+                onPointerMove={(e) => {
+                  const g = drag.current;
+                  if (!g || g.iso !== iso) return;
+                  if (!g.moved) {
+                    const touch = e.pointerType === "touch";
+                    if (Math.hypot(e.clientX - g.x0, e.clientY - g.y0) < (touch ? 8 : 5)) return; // a small wobble is still a click, or still a hold
+                    if (touch) { window.clearTimeout(hold.current); drag.current = null; return; } // moved before the hold was up: a scroll
+                  }
+                  g.moved = true;
+                  const a = minutesAt(g, g.y0), b = minutesAt(g, e.clientY);
+                  const from = Math.min(a, b, 1410);
+                  setSlot(null);
+                  setSel({ iso, from, to: Math.max(a, b, from + 30) });
+                }}
+                onPointerUp={(e) => {
+                  window.clearTimeout(hold.current);
+                  const g = drag.current;
+                  drag.current = null;
+                  if (!g?.moved || !sel) return;
+                  // Swallow the click this release produces, and only that one: it may land elsewhere, come late on a touch screen, or not come at all.
+                  dragged.current = true;
+                  setTimeout(() => { dragged.current = false; }, e.pointerType === "touch" ? 400 : 0);
+                  setSlot({ ...sel, start: hhmmOf(sel.from), end: hhmmOf(sel.to), x: e.clientX, y: e.clientY });
+                  setSel(null);
+                }}
+                onPointerCancel={() => { window.clearTimeout(hold.current); drag.current = null; setSel(null); }}
+                onContextMenu={(e) => { if (drag.current) e.preventDefault(); }} // a held press must not open the browser's own menu
                 aria-label={`${d.toFormat("cccc d LLLL")}`}
               >
                 {hours.map((h) => <div key={h} className="hour-cell" aria-hidden />)}
-                {slot?.iso === iso && <div className="slot-ghost" style={{ top: (slot.hour - startHour) * HOUR_PX, height: HOUR_PX }} aria-hidden>{DateTime.fromObject({ hour: slot.hour }).toFormat("h a")}</div>}
+                {[sel, slot].map((g, n) => g?.iso === iso && (
+                  <div key={n} className={`slot-ghost ${n === 0 ? "is-dragging" : ""}`} style={{ top: (g.from / 60 - startHour) * HOUR_PX, height: ((g.to - g.from) / 60) * HOUR_PX }} aria-hidden>
+                    {g.to - g.from === 60 && g.from % 60 === 0 && n === 1 ? clockOf(g.from) : <>{clockOf(g.from)} – {clockOf(g.to)}{n === 0 && <span className="slot-length">{lengthOf(g.to - g.from)}</span>}</>}
+                  </div>
+                ))}
                 {iso === today && nowTop >= 0 && nowTop <= hours.length * HOUR_PX && <div className="now-line" style={{ top: nowTop }} aria-hidden />}
                 {dayTasks.map(({ t, top }) => <TaskChip key={t.id} task={t} tz={tz} top={top} onOpen={() => onOpenTask(t.id)} />)}
                 {segs.map((s) => {
