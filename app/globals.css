@@ -329,7 +329,14 @@ button.avatar:hover { background: var(--accent-hover); }
 .mini-day.is-week { background: var(--surface-2); }
 .mini-day.is-today { background: var(--accent); color: var(--accent-ink); font-weight: 600; border-radius: 8px; }
 .side-row { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; background: none; padding: 4px 0; cursor: pointer; text-align: left; }
-.side-type { display: inline-flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 999px; background: var(--surface-2); font-size: 11px; }
+/* An activity in the sidebar wears its own colour, as on the Activities page. */
+.side-type { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px 3px 7px; border-radius: 999px; font-size: 11px; background: color-mix(in srgb, var(--a-bg) 20%, var(--surface)); border: 1px solid color-mix(in srgb, var(--a-bd) 55%, transparent); }
+.side-type .swatch { border-radius: 50%; background: var(--a-bg); border: 1px solid var(--a-bd); }
+.side-time { width: 46px; flex-shrink: 0; font-weight: 700; font-size: 11px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.side-what { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar .day-bar-wrap { margin-bottom: 8px; }
+.sidebar .day-bar { height: 14px; border-radius: 5px; }
+.sidebar .bank-dots { margin: 0; padding: 0; border: 0; }
 @media (max-width: 1199px) { .sidebar { display: none; } }
 
 /* ---------- Tasks inline ---------- */
@@ -549,26 +556,34 @@ textarea { resize: vertical; }
 .select-none { padding: 9px 10px; color: var(--muted); }
 
 /* ---------- Settings: one label per row on the left, its control on the right ---------- */
-.settings section { margin-top: 12px; }
-.set-title { margin: 0 4px 8px; font-size: 15px; font-weight: 600; color: var(--ink-2); }
+.settings { gap: 28px; }
 .set-card { padding: 2px 16px; }
 .set-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px 20px; padding: 14px 0; }
-.set-row + .set-row, .set-status + .set-row { border-top: 1px solid var(--line); }
-.set-label { font-weight: 500; }
+.set-row + .set-row { border-top: 1px solid var(--line); }
+.set-label { display: flex; align-items: center; gap: 10px; font-weight: 500; }
+.set-icon { flex-shrink: 0; color: var(--ink-2); }
 .set-desc { margin: 2px 0 0; font-size: 13px; line-height: 1.45; color: var(--muted); max-width: 62ch; }
-.set-status .set-desc { max-width: none; }
-.set-foot { margin: 8px 4px 0; }
+.set-row .set-desc { margin-left: 28px; }
 .set-row .select-btn { min-width: 190px; }
 .set-password { display: flex; gap: 8px; }
 .set-password input { width: 200px; }
-/* Reminder status: the one thing on this page that can be wrong, so it leads with a state colour. */
-.set-status { display: flex; align-items: flex-start; gap: 12px; flex-wrap: wrap; padding: 14px 0; }
-.set-bell { display: grid; place-items: center; width: 38px; height: 38px; border-radius: 50%; flex-shrink: 0; }
+/* Whether this device gets reminders: a large bell, the state in a word, and the switch or the button that changes it. */
+.set-status { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.set-status.is-ok { border-color: color-mix(in srgb, var(--ok) 45%, var(--line)); }
+.set-bell { display: grid; place-items: center; width: 48px; height: 48px; border-radius: 50%; flex-shrink: 0; }
 .set-status.is-ok .set-bell { background: var(--ok-soft); color: var(--ok); }
 .set-status.is-warn .set-bell { background: var(--warn-soft); color: var(--warn); }
-.set-status strong { display: block; padding-top: 1px; font-size: 16px; }
+.set-status strong { display: block; font-size: 17px; }
+/* On a narrow screen the words keep their width and the button drops below them. */
+.set-status > .grow { flex: 1 1 180px; }
+.set-status .set-desc { max-width: none; }
 .set-steps { margin: 8px 0 0; padding-left: 20px; display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: var(--ink-2); }
-.set-actions { display: flex; gap: 8px; flex-wrap: wrap; align-self: center; }
+/* The devices that receive reminders. */
+.set-devices .kit-token { gap: 10px; padding: 8px 6px 8px 10px; border-radius: var(--radius); }
+.set-devices li.kit-token { cursor: default; }
+.set-device { width: 32px; height: 32px; border-radius: 10px; background: var(--surface-2); color: var(--ink-2); }
+.set-devices .icon-btn { width: 30px; height: 30px; font-size: 13px; }
+.set-devices .kit-add { padding: 8px 16px; min-height: 50px; }
 /* On/off switch for a checkbox. */
 .switch { appearance: none; position: relative; width: 42px; height: 26px; margin: 0; border-radius: 13px; background: var(--line-2); cursor: pointer; transition: background .15s; flex-shrink: 0; }
 .switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .3); transition: translate .15s cubic-bezier(.16, 1, .3, 1); }

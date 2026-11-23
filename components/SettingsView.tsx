@@ -8,6 +8,15 @@ import { useNotificationStatus, STATUS_LABEL } from "./NotificationBadge";
 import Select from "./Select";
 import { disableNotifications, enableNotifications, isIOS, sendTestNotification } from "@/lib/push-client";
 
+const icon = (d: string) => <svg className="set-icon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d={d} /></svg>;
+// A picture in front of each setting's name.
+const ICON = {
+  bell: icon("M6 9.5a6 6 0 0 1 12 0c0 4.5 2 5.5 2 6.5H4c0-1 2-2 2-6.5zM10 19.5a2 2 0 0 0 4 0"),
+  globe: icon("M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.500 5.600 12 3z"),
+  strike: icon("M4 6.5h16v13H4zM8 3.5v5M16 3.5v5M7.500 13.500h9"),
+  lock: icon("M6.5 11h11v9h-11zM8.5 11V8a3.5 3.5 0 0 1 7 0v3"),
+};
+
 function deviceName(ua: string | null) {
   if (!ua) return "Unknown device";
   const os = /iPhone/.test(ua) ? "iPhone" : /iPad/.test(ua) ? "iPad" : /Android/.test(ua) ? "Android" : /Mac OS X/.test(ua) ? "Mac" : /Windows/.test(ua) ? "Windows" : /Linux/.test(ua) ? "Linux" : "Device";
@@ -122,84 +131,86 @@ export default function SettingsView({ ctx }: { ctx: PlannerCtx }) {
     <div className="page settings">
       <div className="page-head"><h1>Settings</h1></div>
 
-      <section>
-        <h2 className="set-title">Reminders on this device</h2>
-        <div className="card set-card">
-          <div className={`set-status ${ok ? "is-ok" : "is-warn"}`} role="status">
-            <span className="set-bell" aria-hidden>
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M6 9.5a6 6 0 0 1 12 0c0 4.5 2 5.5 2 6.5H4c0-1 2-2 2-6.5zM10 19.5a2 2 0 0 0 4 0" />
-                {!ok && <path d="M4 4l16 16" />}
-              </svg>
-            </span>
-            <div className="grow">
-              <strong>{status ? STATUS_LABEL[status] : "Checking…"}</strong>
-              <p className="set-desc">
-                {status === "enabled" && "This browser will receive reminders even when the app isn’t open, as long as the device is online and system notifications are allowed."}
-                {status === "not-enabled" && "Reminders won’t reach this device until you enable them. Each browser and device is set up separately."}
-                {status === "blocked" && "Notifications are blocked for this site. Your calendar still works. To turn reminders on:"}
-                {status === "needs-home-screen" && "On iPhone and iPad, reminders only work after adding this app to your Home Screen:"}
-                {status === "unsupported" && "This browser doesn’t support web push reminders. Try Chrome, Edge, Firefox or Safari 16.4+."}
-              </p>
-              {steps && <ol className="set-steps">{steps.map((x) => <li key={x}>{x}</li>)}</ol>}
-            </div>
-            {(status === "not-enabled" || ok) && (
-              <div className="set-actions">
-                {status === "not-enabled" && <button className="btn btn-primary" disabled={busy} onClick={enable}>Enable reminders</button>}
-                {ok && <button className="btn" disabled={busy} onClick={test}>Send test notification</button>}
-                {ok && <button className="btn btn-ghost" disabled={busy} onClick={disable}>Turn off on this device</button>}
-              </div>
-            )}
+      <section className="kit">
+        <div className="kit-head"><h2>Reminders</h2></div>
+        <div className={`card set-status ${ok ? "is-ok" : "is-warn"}`} role="status">
+          <span className="set-bell" aria-hidden>
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M6 9.5a6 6 0 0 1 12 0c0 4.5 2 5.5 2 6.5H4c0-1 2-2 2-6.5zM10 19.5a2 2 0 0 0 4 0" />
+              {!ok && <path d="M4 4l16 16" />}
+            </svg>
+          </span>
+          <div className="grow">
+            <strong>{status ? STATUS_LABEL[status] : "Checking…"}</strong>
+            <p className="set-desc">
+              {status === "enabled" && "This device gets reminders even when the app is closed."}
+              {status === "not-enabled" && "Each device is turned on separately."}
+              {status === "blocked" && "Notifications are blocked for this site. To turn reminders on:"}
+              {status === "needs-home-screen" && "On iPhone and iPad, add this app to your Home Screen first:"}
+              {status === "unsupported" && "This browser can’t receive reminders. Try Chrome, Edge, Firefox or Safari 16.4+."}
+            </p>
+            {steps && <ol className="set-steps">{steps.map((x) => <li key={x}>{x}</li>)}</ol>}
           </div>
-
-          {devices.map((d) => (
-            <div key={d.id} className="set-row">
-              <div>
-                <span className="set-label">{deviceName(d.user_agent)}</span>
-                <p className="set-desc">Receiving reminders since {new Date(d.created_at).toLocaleDateString()}</p>
-              </div>
-              <button className="btn btn-ghost btn-sm" onClick={() => removeDevice(d.id)}>Remove</button>
-            </div>
-          ))}
+          {status === "not-enabled" && <button className="btn btn-primary" disabled={busy} onClick={enable}>Enable reminders</button>}
+          {ok && <input type="checkbox" role="switch" className="switch" aria-label="Reminders on this device" checked disabled={busy} onChange={disable} />}
         </div>
-        <p className="hint set-foot">Reminders can’t be guaranteed to the exact second. They depend on the browser, connection and system settings{isIOS() ? ", and on iOS the Home Screen app" : ""}.</p>
+
+        {/* Every device that receives reminders, as a tile. The cross takes one off the list. */}
+        {(devices.length > 0 || ok) && (
+          <ul className="kit-row set-devices">
+            {devices.map((d) => {
+              const name = deviceName(d.user_agent);
+              const phone = /iPhone|Android/.test(name);
+              return (
+                <li key={d.id} className="kit-token">
+                  <span className="kit-mono set-device" aria-hidden>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                      {phone ? <path d="M8 3h8a1.5 1.5 0 0 1 1.5 1.5v15A1.5 1.5 0 0 1 16 21H8a1.5 1.5 0 0 1-1.5-1.5v-15A1.5 1.5 0 0 1 8 3zM11 18h2" /> : <path d="M5 5.5h14v10H5zM2.5 19h19" />}
+                    </svg>
+                  </span>
+                  <span><span className="kit-name">{name}</span><span className="kit-sub">since {new Date(d.created_at).toLocaleDateString(undefined, { day: "numeric", month: "short" })}</span></span>
+                  <button className="icon-btn" aria-label={`Remove ${name}`} title="Remove" onClick={() => removeDevice(d.id)}>✕</button>
+                </li>
+              );
+            })}
+            {ok && <li><button className="kit-token kit-add" disabled={busy} onClick={test}><span className="kit-add-text">Send a test</span></button></li>}
+          </ul>
+        )}
+        <p className="hint">Timing depends on the browser and connection, so it is not exact to the second{isIOS() ? ". On iOS it needs the Home Screen app" : ""}.</p>
       </section>
 
-      <section>
-        <h2 className="set-title">Defaults</h2>
+      <section className="kit">
+        <div className="kit-head"><h2>Defaults</h2></div>
         <div className="card set-card">
           <div className="set-row">
-            <span className="set-label">Default appointment reminder</span>
+            <span className="set-label">{ICON.bell}Remind me before appointments</span>
             <ReminderPicker id="set-reminder" value={profile?.default_reminder_minutes ?? null} onChange={(v) => update({ default_reminder_minutes: v })} />
           </div>
           <div className="set-row">
             <div>
-              <label htmlFor="set-tz" className="set-label">Time zone</label>
+              <label htmlFor="set-tz" className="set-label">{ICON.globe}Time zone</label>
               {profile?.time_zone && profile.time_zone !== deviceTz && (
-                <p className="set-desc">This device is set to {deviceTz}. <button className="link" onClick={() => update({ time_zone: deviceTz })}>Use it</button></p>
+                <p className="set-desc">This device is on {deviceTz}. <button className="link" onClick={() => update({ time_zone: deviceTz })}>Use it</button></p>
               )}
             </div>
             <Select id="set-tz" search value={profile?.time_zone ?? tz} options={zones.map((z) => ({ value: z, label: z.replace(/_/g, " ") }))} onChange={(v) => update({ time_zone: v })} />
           </div>
           <div className="set-row">
-            <label htmlFor="set-cancelled" className="set-label">Show cancelled appointments in the calendar</label>
+            <label htmlFor="set-cancelled" className="set-label">{ICON.strike}Show cancelled appointments</label>
             <input id="set-cancelled" type="checkbox" role="switch" className="switch" checked={!!profile?.show_cancelled} onChange={(e) => update({ show_cancelled: e.target.checked })} />
           </div>
         </div>
       </section>
 
       {/* Who is signed in, and sign out, live in the avatar menu. The password stays here: a reset link opens this page. */}
-      <section>
-        <h2 className="set-title">Password</h2>
+      <section className="kit">
+        <div className="kit-head"><h2>Password</h2></div>
         <form onSubmit={savePassword} className="card set-card">
           <div className="set-row">
-            <div>
-              <label htmlFor="set-password" className="set-label">{resetting ? "Choose a new password" : "Set or change password"}</label>
-              <p className="set-desc">At least 8 characters.</p>
-            </div>
+            <label htmlFor="set-password" className="set-label">{ICON.lock}{resetting ? "Choose a new password" : "New password"}</label>
             <div className="set-password">
-              <input id="set-password" type="password" autoFocus={resetting} required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
-              <button className="btn">Save password</button>
+              <input id="set-password" type="password" autoFocus={resetting} required minLength={8} placeholder="8 characters or more" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password" />
+              <button className="btn" disabled={password.length < 8}>Save</button>
             </div>
           </div>
         </form>
