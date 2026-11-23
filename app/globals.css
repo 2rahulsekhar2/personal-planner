@@ -122,6 +122,21 @@ button.brand { display: inline-flex; align-items: center; gap: 8px; border: 0; b
 .count { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; font-size: 11px; margin-left: 6px; }
 .count-alert { background: var(--danger); color: var(--surface); }
 .topbar-right { display: flex; gap: 8px; align-items: center; margin-left: auto; }
+/* Time or Money: the one choice that changes everything else. On a wide screen it sits in the middle of the
+   header; on a phone it is the bottom bar (see the mobile rules). Two halves with a mark that slides to the one in
+   use, in the accent colour so it does not read as the Week / Day switch, a smaller choice.
+   Fixed rather than inside the header: the header blurs what is behind it, and a blurred ancestor would trap it. */
+.mode-switch {
+  position: fixed; top: 12px; left: 50%; translate: -50% 0; z-index: 21;
+  display: grid; grid-template-columns: 1fr 1fr; padding: 2px; border-radius: 999px;
+  background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line);
+}
+.mode-switch::before { content: ""; position: absolute; top: 2px; bottom: 2px; left: 2px; width: calc(50% - 2px); border-radius: 999px; background: var(--accent); box-shadow: 0 2px 8px rgba(40, 20, 120, .35); transition: translate .28s cubic-bezier(.16, 1, .3, 1), left .28s cubic-bezier(.16, 1, .3, 1); }
+.mode-switch[data-mode="money"]::before { translate: 100% 0; }
+.mode-switch button { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 5px; min-height: 28px; padding: 0 12px; border: 0; border-radius: 999px; background: none; color: var(--ink-2); font-size: 13px; font-weight: 600; cursor: pointer; transition: color .2s; }
+.mode-switch button svg { width: 14px; height: 14px; }
+.mode-switch button:hover { color: var(--ink); }
+.mode-switch button.is-active { color: var(--accent-ink); }
 /* Add floats at the bottom right on every screen size: a small round button, icon only; the label stays for screen readers. */
 .btn-add { position: fixed; right: 14px; bottom: 16px; z-index: 30; width: 46px; min-height: 46px; padding: 0; border-radius: 50%; box-shadow: 0 4px 14px rgba(40, 20, 120, .45); }
 .btn-add .add-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
@@ -692,6 +707,35 @@ p.outcome-reason { display: block; }
 .plan-pill.is-on { background: var(--ok-soft); color: var(--ok); }
 /* A section heading with its dots: one a line, filled once paid or received. */
 .line-head .bank-dots { flex: 1; margin: 0; padding: 0; border: 0; }
+/* A settled line's box is filled, so paid and unpaid tell apart down the column without reading. */
+.money-lines .task-check { padding: 0; border-radius: 50%; border-color: var(--line-2); }
+.money-lines .task-check:hover:not(:disabled) { border-color: var(--ok); }
+.money-lines .task-check.is-checked { background: var(--ok); border-color: var(--ok); color: var(--surface); }
+.money-lines .task-check:disabled { opacity: .4; cursor: default; }
+/* Lines gathered under their type: a heading with the type's total and how much of it is settled, then its lines. */
+.money-groups { display: flex; flex-direction: column; gap: 10px; }
+.money-group { padding: 0; overflow: hidden; }
+.money-group-head { display: flex; align-items: center; gap: 12px; width: 100%; padding: 12px 14px; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; font-variant-numeric: tabular-nums; }
+.money-group-head:hover { background: var(--surface-2); }
+.money-group-head .kit-mono { width: 30px; height: 30px; border-radius: 9px; font-size: 13px; }
+.money-group-what { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+/* A long type name is cut short; the date beside it never is. */
+.money-group-name { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-weight: 700; }
+.money-group-track { height: 4px; border-radius: 2px; background: var(--surface-2); overflow: hidden; }
+.money-group-track span { display: block; height: 100%; border-radius: 2px; background: var(--a-bg, var(--muted)); }
+.money-group-sum { display: flex; flex-direction: column; align-items: flex-end; flex-shrink: 0; line-height: 1.3; }
+.money-group-sum span { font-size: 12px; color: var(--muted); }
+.money-group.is-done .money-group-sum span { color: var(--ok); }
+.money-group-fold { flex-shrink: 0; color: var(--muted); transition: rotate .2s cubic-bezier(.16, 1, .3, 1); }
+.money-group-head[aria-expanded="true"] .money-group-fold { rotate: 180deg; }
+.money-group .money-lines { padding: 0 14px 6px; border-top: 1px solid var(--line); }
+/* Too many lines for a dot each: a bar and the count. */
+.line-progress { flex: 1; display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.line-progress-track { flex: 0 1 120px; height: 5px; border-radius: 3px; background: var(--surface-2); overflow: hidden; }
+.line-progress-track span { display: block; height: 100%; background: var(--ok); border-radius: 3px; }
+.line-day { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.money-group-name .line-day { flex-shrink: 0; font-weight: 400; }
+.line-head .bank-dots + .line-day, .line-head .line-progress + .line-day { margin-right: 4px; }
 /* A line's due date as a calendar leaf. */
 .line-date { display: flex; flex-direction: column; align-items: center; justify-content: center; width: 38px; height: 40px; flex-shrink: 0; border-radius: 10px; background: var(--surface-2); line-height: 1.1; font-variant-numeric: tabular-nums; }
 .line-date strong { font-size: 15px; }
@@ -934,15 +978,31 @@ button.kit-token.is-act:hover { background: color-mix(in srgb, var(--a-bg) 34%, 
 
 /* ---------- Mobile ---------- */
 @media (max-width: 899px) {
-  .topbar { padding: 8px 12px; gap: 8px; flex-wrap: wrap; backdrop-filter: none; background: var(--bg); }
+  .topbar { padding: 8px 12px; gap: 8px; backdrop-filter: none; background: var(--bg); }
     .content { padding: 14px 12px 90px; }
   .panel {
     position: fixed; inset: 0; width: 100%; height: 100%; z-index: 50; border-left: 0; top: 0;
   }
   .toolbar-title { font-size: 17px; flex-basis: 100%; order: -1; }
   /* Week grid goes edge to edge on phones: no card around it, and a narrower hours column. */
-  /* The week grid runs to the bottom of the screen, under the floating nav and Add button. */
-  .content:has(.week) { padding-bottom: 0; }
+  /* The bottom bar: Time on the left, Money on the right, and Add in the notch between them. It is part of the
+     screen's edge, not a thing floating over the page, so nothing is hidden behind it. */
+  .mode-switch {
+    top: auto; left: 0; right: 0; bottom: 0; translate: none; z-index: 25;
+    grid-template-columns: 1fr 76px 1fr; height: calc(58px + env(safe-area-inset-bottom)); padding: 0 0 env(safe-area-inset-bottom);
+    border-radius: 0; background: var(--bg); box-shadow: none; border-top: 1px solid var(--line);
+  }
+  .mode-switch button { flex-direction: column; gap: 3px; min-height: 58px; padding: 0; border-radius: 0; font-size: 11px; color: var(--muted); }
+  .mode-switch button:last-child { grid-column: 3; }
+  .mode-switch button svg { width: 22px; height: 22px; }
+  .mode-switch button.is-active { color: var(--accent-text); }
+  /* The mark becomes a short bar along the top edge, over the side in use. */
+  .mode-switch::before { top: -1px; bottom: auto; height: 3px; width: 40px; left: calc((100% - 76px) / 4 - 20px); border-radius: 0 0 3px 3px; box-shadow: none; }
+  .mode-switch[data-mode="money"]::before { translate: none; left: calc(100% - (100% - 76px) / 4 - 20px); }
+  .btn-add { right: auto; left: 50%; translate: -50% 0; bottom: calc(6px + env(safe-area-inset-bottom)); }
+  .add-menu { right: auto; left: 50%; translate: -50% 0; bottom: calc(70px + env(safe-area-inset-bottom)); transform-origin: bottom center; }
+  /* The week grid fills the screen down to the bar. */
+  .content:has(.week) { padding-bottom: calc(58px + env(safe-area-inset-bottom)); }
   /* On phones the columns sit straight on the sky, so a light lift sets them apart. On desktop the card around the grid does that. */
   .week-col { box-shadow: 0 1px 2px light-dark(rgba(40, 20, 120, .12), rgba(0, 0, 0, .4)), 0 4px 12px light-dark(rgba(40, 20, 120, .16), rgba(0, 0, 0, .45)); }
   .week-scroll { margin: 0 -12px; padding: 0; background: none; border: 0; border-radius: 0; box-shadow: none; scrollbar-width: none; }

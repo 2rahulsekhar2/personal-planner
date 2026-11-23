@@ -70,34 +70,87 @@ const dueLabel = (l: Line) => {
   return l.dates.length > 1 ? `${l.dates.length} times, from ${d.toFormat("d LLL")}` : d.toFormat("ccc d LLL");
 };
 
-/** A month's income or expense lines. The box marks a line paid or received; the row opens that month's figures. */
-// `flat`: inside another card (the bills of a bank), so drawn without a card of its own.
-function Lines({ lines, meta, onToggle, onOpen, empty, locked, flat }: { lines: Line[]; meta?: (l: Line) => React.ReactNode; onToggle: (l: Line) => void; onOpen: (l: Line) => void; empty: string; locked?: boolean; flat?: boolean }) {
+// What is still open comes first, then what is settled, then what was skipped; by date within each.
+const lineRank = (l: Line) => (l.skipped ? 2 : l.paid ? 1 : 0);
+const inOrder = (lines: Line[]) => [...lines].sort((a, b) => lineRank(a) - lineRank(b) || a.dates[0].localeCompare(b.dates[0]) || a.item.name.localeCompare(b.item.name));
+/** The one day every line falls on, when they all share it: then the day is said once, not on every row. */
+const sharedDay = (lines: Line[]) => (lines.length > 1 && lines.every((l) => l.dates.length === 1 && l.dates[0] === lines[0].dates[0]) ? lines[0].dates[0] : null);
+
+/**
+ * A month's income or expense lines. The box marks a line paid or received; the row opens that month's figures.
+ * `flat`: inside another card (the bills of a bank), so drawn without a card of its own.
+ * `groupBy`: gather the lines under their type, each group with its own total and progress. A group that is all
+ * settled starts folded to its heading. With fewer than two types in the list there is nothing to group.
+ */
+function Lines({ lines, meta, onToggle, onOpen, empty, locked, flat, groupBy }: {
+  lines: Line[]; meta?: (l: Line) => React.ReactNode; onToggle: (l: Line) => void; onOpen: (l: Line) => void; empty: string; locked?: boolean; flat?: boolean;
+  groupBy?: (typeId: string | null) => { name: string; tone: string | null };
+}) {
+  const [flipped, setFlipped] = useState<string[]>([]); // groups whose fold was changed by hand
   if (!lines.length) return <p className="empty card">{empty}</p>;
+  const verb = lines[0].item.kind === "expense" ? "paid" : "received";
+  // `noLeaf`: every line around this one falls on the same day, which is said once above them instead.
+  const row = (l: Line, noLeaf: boolean) => (
+    <li key={l.item.id} className={`task-row ${l.paid ? "is-done" : ""} ${l.skipped ? "is-skipped" : ""}`}>
+      <button className={`task-check ${l.paid ? "is-checked" : ""}`} disabled={l.skipped || locked} aria-pressed={l.paid} aria-label={`${l.item.name}: ${l.paid ? `mark not ${verb}` : `mark ${verb}`}`} onClick={() => onToggle(l)}>
+        {l.paid && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>}
+      </button>
+      {/* The due date as a small calendar leaf: the day over its weekday. An item due many times shows how many. */}
+      {!noLeaf && (
+        <span className="line-date" role="img" aria-label={dueLabel(l)}>
+          {l.dates.length > 1 ? <><strong>×{l.dates.length}</strong><span>times</span></> : <><strong>{DateTime.fromISO(l.dates[0]).toFormat("d")}</strong><span>{DateTime.fromISO(l.dates[0]).toFormat("ccc")}</span></>}
+        </span>
+      )}
+      <button className="task-main" onClick={() => onOpen(l)}>
+        <span className="task-title">{l.item.name}</span>
+        {(l.skipped || meta?.(l)) && <span className="task-due line-meta">{l.skipped ? "Skipped" : meta!(l)}</span>}
+      </button>
+      <span className="money-amt">
+        <strong>{inr(expected(l))}</strong>
+        {l.actual !== null && l.actual !== l.budget && <span className={l.item.kind === "expense" && l.actual > l.budget ? "is-over" : ""}>of {inr(l.budget)}</span>}
+        {/* Under a rupee apart is rounding from an import, not a change worth pointing at. */}
+        {l.actual === null && Math.abs(l.budget - l.rule) >= 1 && <span>usually {inr(l.rule)}</span>}
+      </span>
+    </li>
+  );
+
+  const typeIds = [...new Set(lines.map((l) => l.item.type_id))];
+  if (!groupBy || typeIds.length < 2) return <ul className={`task-list money-lines ${flat ? "is-flat" : "card"}`}>{inOrder(lines).map((l) => row(l, !!sharedDay(lines)))}</ul>;
+
+  const groups = typeIds.map((id) => {
+    const own = lines.filter((l) => l.item.type_id === id);
+    const live = own.filter((l) => !l.skipped);
+    const total = live.reduce((sum, l) => sum + expected(l), 0);
+    const done = live.filter((l) => l.paid);
+    return { key: id ?? "none", ...groupBy(id), own, live, total, done, settled: done.reduce((sum, l) => sum + expected(l), 0) };
+  }).sort((a, b) => b.total - a.total);
+
   return (
-    <ul className={`task-list money-lines ${flat ? "is-flat" : "card"}`}>
-      {lines.map((l) => {
-        const verb = l.item.kind === "expense" ? "paid" : "received";
+    <div className="money-groups">
+      {groups.map((g) => {
+        const allDone = g.live.length > 0 && g.done.length === g.live.length;
+        const open = flipped.includes(g.key) ? allDone : !allDone;
+        const day = sharedDay(g.own);
         return (
-          <li key={l.item.id} className={`task-row ${l.paid ? "is-done" : ""} ${l.skipped ? "is-skipped" : ""}`}>
-            <button className={`task-check ${l.paid ? "is-checked" : ""}`} disabled={l.skipped || locked} aria-pressed={l.paid} aria-label={`${l.item.name}: ${l.paid ? `mark not ${verb}` : `mark ${verb}`}`} onClick={() => onToggle(l)}>{l.paid ? "✓" : ""}</button>
-            {/* The due date as a small calendar leaf: the day over its weekday. An item due many times shows how many. */}
-            <span className="line-date" role="img" aria-label={dueLabel(l)}>
-              {l.dates.length > 1 ? <><strong>×{l.dates.length}</strong><span>times</span></> : <><strong>{DateTime.fromISO(l.dates[0]).toFormat("d")}</strong><span>{DateTime.fromISO(l.dates[0]).toFormat("ccc")}</span></>}
-            </span>
-            <button className="task-main" onClick={() => onOpen(l)}>
-              <span className="task-title">{l.item.name}</span>
-              {(l.skipped || meta) && <span className="task-due line-meta">{l.skipped ? "Skipped" : meta!(l)}</span>}
+          <section key={g.key} className={`card money-group ${allDone ? "is-done" : ""}`}>
+            <button className="money-group-head" aria-expanded={open} onClick={() => setFlipped(flipped.includes(g.key) ? flipped.filter((k) => k !== g.key) : [...flipped, g.key])}>
+              <span className={`kit-mono ${g.tone ? `act-${g.tone}` : "is-none"}`} aria-hidden>{g.name[0]?.toUpperCase()}</span>
+              <span className="grow money-group-what">
+                <span className="money-group-name"><span className="kit-name">{g.name}</span>{day && <span className="line-day">{DateTime.fromISO(day).toFormat("d LLL")}</span>}</span>
+                {/* How much of the group is settled. */}
+                <span className={`money-group-track ${g.tone ? `act-${g.tone}` : ""}`} aria-hidden><span style={{ width: `${g.total > 0 ? (g.settled / g.total) * 100 : 0}%` }} /></span>
+              </span>
+              <span className="money-group-sum">
+                <strong>{inr(g.total)}</strong>
+                <span>{g.live.length === 0 ? "skipped" : allDone ? `all ${verb}` : `${g.done.length} of ${g.live.length} ${verb}`}</span>
+              </span>
+              <svg className="money-group-fold" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M6 9.5l6 6 6-6" /></svg>
             </button>
-            <span className="money-amt">
-              <strong>{inr(expected(l))}</strong>
-              {l.actual !== null && l.actual !== l.budget && <span className={l.item.kind === "expense" && l.actual > l.budget ? "is-over" : ""}>of {inr(l.budget)}</span>}
-              {l.actual === null && l.budget !== l.rule && <span>usually {inr(l.rule)}</span>}
-            </span>
-          </li>
+            {open && <ul className="task-list money-lines is-flat">{inOrder(g.own).map((l) => row(l, !!day))}</ul>}
+          </section>
         );
       })}
-    </ul>
+    </div>
   );
 }
 
@@ -386,12 +439,27 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
     </div>
   );
   // A section's heading: its name, a dot a line (filled once paid or received), and the button that adds one.
+  // A type keeps the colour it has on Setup and Insights.
+  const typeAt = new Map([...view.types].sort((a, b) => a.kind.localeCompare(b.kind)).map((t, n) => [t.id, { name: t.name, tone: TONES[n % TONES.length] as string | null }]));
+  const groupBy = (id: string | null) => (id ? typeAt.get(id) : undefined) ?? { name: id ? "A removed type" : "No type", tone: null };
+  // Inside a type's group the type is already said: only the bank is left to show.
+  const bankOnly = (l: Line) => {
+    const bank = l.item.bank_id ? bankAt.get(l.item.bank_id) : undefined;
+    return bank ? <><span className={`kit-mono is-mini act-${bank.tone}`} aria-hidden>{bank.name.trim()[0]?.toUpperCase()}</span>{bank.name}</> : null;
+  };
   const head = (title: string, kind: MoneyKind) => {
     const own = lines.filter((l) => l.item.kind === kind);
+    const live = own.filter((l) => !l.skipped);
+    const done = live.filter((l) => l.paid).length;
+    const word = kind === "expense" ? "paid" : "received";
+    const day = sharedDay(own);
     return (
       <div className="page-head line-head">
         <h2>{title}</h2>
-        {own.length > 0 && <span className="bank-dots" role="img" aria-label={`${own.filter((l) => l.paid).length} of ${own.length} ${kind === "expense" ? "paid" : "received"}`}>{own.map((l) => <i key={l.item.id} className={l.paid ? "is-paid" : l.skipped ? "is-skipped" : ""} />)}</span>}
+        {/* A dot a line while they can be counted at a glance; past that, a bar and the count. */}
+        {own.length > 0 && own.length <= 12 && <span className="bank-dots" role="img" aria-label={`${done} of ${live.length} ${word}`}>{inOrder(own).map((l) => <i key={l.item.id} className={l.paid ? "is-paid" : l.skipped ? "is-skipped" : ""} />)}</span>}
+        {own.length > 12 && <span className="line-progress" role="img" aria-label={`${done} of ${live.length} ${word}`}><span className="line-progress-track"><span style={{ width: `${live.length ? (done / live.length) * 100 : 0}%` }} /></span>{done}/{live.length}</span>}
+        {day && <span className="line-day">all on {DateTime.fromISO(day).toFormat("d LLL")}</span>}
         {canEdit && <button className="btn btn-sm" aria-label={`Add ${kind === "expense" ? "an expense" : "an income"}`} onClick={() => setPanel({ kind: "item", as: kind })}>＋</button>}
       </div>
     );
@@ -488,9 +556,9 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
                 {scope && <Requests ctx={ctx} money={money} scope={scope} canEdit={canEdit} onAgain={(p) => setPanel({ kind: "item", id: p.item_id ?? undefined, again: p })} />}
 
                 {head("Income", "income")}
-                <Lines lines={lines.filter((l) => l.item.kind === "income")} meta={meta} onToggle={togglePaid} onOpen={openLine} locked={!canEdit} empty={`No income in ${monthLabel(ym)}.`} />
+                <Lines groupBy={groupBy} lines={lines.filter((l) => l.item.kind === "income")} meta={new Set(lines.filter((l) => l.item.kind === "income").map((l) => l.item.type_id)).size > 1 ? bankOnly : meta} onToggle={togglePaid} onOpen={openLine} locked={!canEdit} empty={`No income in ${monthLabel(ym)}.`} />
                 {head("Expenses", "expense")}
-                <Lines lines={lines.filter((l) => l.item.kind === "expense")} meta={meta} onToggle={togglePaid} onOpen={openLine} locked={!canEdit} empty={`No expenses in ${monthLabel(ym)}.`} />
+                <Lines groupBy={groupBy} lines={lines.filter((l) => l.item.kind === "expense")} meta={new Set(lines.filter((l) => l.item.kind === "expense").map((l) => l.item.type_id)).size > 1 ? bankOnly : meta} onToggle={togglePaid} onOpen={openLine} locked={!canEdit} empty={`No expenses in ${monthLabel(ym)}.`} />
               </>
             )}
 

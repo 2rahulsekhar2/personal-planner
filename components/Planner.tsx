@@ -269,11 +269,6 @@ export default function Planner() {
           <img src="/icon.svg" alt="" width={26} height={26} />
           Planner
         </button>
-        <div className="view-toggle mode-toggle" role="group" aria-label="Side of the planner">
-          {(["time", "money"] as const).map((m) => (
-            <button key={m} className={mode === m ? "is-active" : ""} aria-pressed={mode === m} onClick={() => switchMode(m)}>{m === "time" ? "Time" : "Money"}</button>
-          ))}
-        </div>
         <div className="topbar-right">
           <button className={`icon-btn nav-settings ${view === "settings" ? "is-active" : ""}`} aria-label={remindersOff ? `Settings: ${STATUS_LABEL[status!]}` : "Settings"} title={remindersOff ? STATUS_LABEL[status!] : "Settings"} aria-current={view === "settings" ? "page" : undefined} onClick={toggleSettings}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -286,6 +281,23 @@ export default function Planner() {
         </div>
       </header>
 
+      {/* The two sides of the app: in the middle of the header on a wide screen, the bottom bar on a phone, where
+          the Add button sits in the notch between them. Money shows a lock until it has been turned on.
+          Outside the header for the same reason as the Add button: a blurred ancestor would pin it to itself. */}
+      <div className="mode-switch" role="group" aria-label="Side of the planner" data-mode={mode}>
+        <button className={mode === "time" ? "is-active" : ""} aria-pressed={mode === "time"} onClick={() => switchMode("time")}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><circle cx="12" cy="12" r="8.5" /><path d="M12 7.5V12l3 2" /></svg>
+          Time
+        </button>
+        <button className={mode === "money" ? "is-active" : ""} aria-pressed={mode === "money"} aria-label={money.status === "off" ? "Money, not turned on yet" : undefined} onClick={() => switchMode("money")}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+            {money.status === "off"
+              ? <path d="M6.5 11h11v9h-11zM8.5 11V8a3.5 3.5 0 0 1 7 0v3" />
+              : <path d="M4 7.5h14a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2zM4 7.5v-1a2 2 0 0 1 2-2h10M16 13.5h.01" />}
+          </svg>
+          Money
+        </button>
+      </div>
       {/* Outside the header: the header blurs what is behind it, and a blurred ancestor would pin this fixed button to itself. */}
       {!showMoney && <div className="add-wrap" ref={addRef}>
         <button className="btn btn-primary btn-add" aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(!menu)}>
