@@ -631,6 +631,21 @@ textarea { resize: vertical; }
 .chips-xs { gap: 4px; margin-top: 6px; }
 .chips-xs .chip { min-height: 26px; padding: 0 9px; gap: 5px; font-size: 12px; }
 .chips-xs .swatch { width: 8px; height: 8px; }
+/* A section's name with its picture. */
+.named { display: inline-flex; align-items: center; gap: 6px; }
+.named svg { flex-shrink: 0; }
+.chip .named { gap: 4px; }
+.chip .named svg { width: 12px; height: 12px; }
+/* In a form the activities wear their colours before one is picked, so the eye finds it without reading. */
+.form .chip[class*="act-"]:not(.is-selected) { background: color-mix(in srgb, var(--a-bg) 16%, var(--surface)); border-color: color-mix(in srgb, var(--a-bd) 45%, transparent); }
+.form .chip[class*="act-"] .swatch { border-radius: 50%; background: var(--a-bg); border: 1px solid var(--a-bd); }
+.form .day-bar-wrap { margin: 10px 0 0; }
+/* The appointment being written, outlined on the day's bar. */
+.day-bar-ghost { position: absolute; top: 0; bottom: 0; min-width: 4px; border: 2px dashed var(--accent); border-radius: 5px; background: color-mix(in srgb, var(--accent) 22%, transparent); }
+.more-toggle { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.more-toggle .chips { margin: 0; }
+.more-toggle .chip { cursor: inherit; font-weight: 400; }
+.due-time { margin-top: 8px; }
 .time-row { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px; margin-top: 8px; }
 /* Save stays in reach at the bottom of the panel while the form scrolls. */
 .panel .form > .form-actions {

@@ -4,8 +4,9 @@ import type { Appointment, ActivityType } from "@/lib/types";
 /**
  * A day drawn as one bar, 6 AM to 10 PM: each appointment a block in its activity's colour, a tentative one
  * hatched, a tick for now. What is left is the free time. Pass the day's appointments, cancelled ones left out.
+ * `ghost` outlines a stretch that is not booked yet: the appointment being written, shown among the day's others.
  */
-export default function DayBar({ appts, typeById, day, tz, now = DateTime.now() }: { appts: Appointment[]; typeById: Map<string, ActivityType>; day: string; tz: string; now?: DateTime }) {
+export default function DayBar({ appts, typeById, day, tz, now = DateTime.now(), ghost }: { appts: Appointment[]; typeById: Map<string, ActivityType>; day: string; tz: string; now?: DateTime; ghost?: { from: DateTime; to: DateTime } }) {
   const from = DateTime.fromISO(day, { zone: tz }).startOf("day").set({ hour: 6 });
   const at = (d: DateTime) => Math.max(0, Math.min(100, (d.diff(from, "minutes").minutes / (16 * 60)) * 100));
   const blocks = appts.map((a) => {
@@ -17,6 +18,7 @@ export default function DayBar({ appts, typeById, day, tz, now = DateTime.now() 
     <div className="day-bar-wrap">
       <div className="day-bar" role="img" aria-label={`${appts.length} ${appts.length === 1 ? "appointment" : "appointments"} between 6 AM and 10 PM`}>
         {blocks.map((b) => <span key={b.id} className={`day-bar-block act-${b.color} ${b.tentative ? "is-tentative" : ""}`} style={{ left: `${b.left}%`, width: `${b.width}%` }} />)}
+        {ghost && at(ghost.to) > at(ghost.from) && <span className="day-bar-ghost" style={{ left: `${at(ghost.from)}%`, width: `${at(ghost.to) - at(ghost.from)}%` }} />}
         {nowAt !== null && nowAt > 0 && nowAt < 100 && <span className="day-bar-now" style={{ left: `${nowAt}%` }} />}
       </div>
       {/* Every third hour, each label under its own place on the bar. */}

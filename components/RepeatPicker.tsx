@@ -4,6 +4,7 @@ import { DateTime } from "luxon";
 import { describeRule, expandRule, monthByChoices, toRule, MAX_OCCURRENCES, WEEKDAY_LABELS, type Freq, type RepeatChoice } from "@/lib/recurrence";
 import { notchOf } from "./ReminderPicker";
 import { useReveal } from "./useReveal";
+import { Named } from "./FormBits";
 
 const UNIT = { daily: "day", weekly: "week", monthly: "month", yearly: "year" } as const;
 // How far a new repeat runs until the person says otherwise.
@@ -49,7 +50,7 @@ export default function RepeatPicker({
 
   return (
     <fieldset className="field reveal" ref={ref}>
-      <legend>Repeat</legend>
+      <legend><Named icon="repeat">Repeat</Named></legend>
       <div className="chips chips-xs" role="group" aria-label="How often" style={{ marginTop: 0 }}>
         {([["", neverLabel], ["daily", "Daily"], ["weekly", "Weekly"], ["monthly", "Monthly"], ["yearly", "Yearly"]] as const).map(([f, label]) => (
           <button type="button" key={f} className={`chip ${freq === f ? "is-selected" : ""}`} aria-pressed={freq === f} onClick={(e) => { setNotch(notchOf(e.currentTarget)); pickFreq(f); }}>{label}</button>
