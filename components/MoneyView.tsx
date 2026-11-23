@@ -4,7 +4,7 @@ import { DateTime } from "luxon";
 import type { PlannerCtx } from "./usePlanner";
 import type { MoneyCtx } from "./useMoney";
 import Panel from "./Panel";
-import MoneySetup from "./MoneySetup";
+import MoneySetup, { TONES } from "./MoneySetup";
 import { MoneyItemForm, MoneyLineForm } from "./MoneyItemForm";
 import { bankPosition, byPerson, byType, expected, forecast, FREQ_LABELS, inr, monthLabel, monthLines, shiftMonth, totals, waitingOn, type Line, type MoneyKind, type Proposal } from "@/lib/money";
 import { canAdd, isCurrent, type Circle } from "@/lib/circles";
@@ -71,18 +71,23 @@ const dueLabel = (l: Line) => {
 };
 
 /** A month's income or expense lines. The box marks a line paid or received; the row opens that month's figures. */
-function Lines({ lines, meta, onToggle, onOpen, empty, locked }: { lines: Line[]; meta: (l: Line) => string; onToggle: (l: Line) => void; onOpen: (l: Line) => void; empty: string; locked?: boolean }) {
+// `flat`: inside another card (the bills of a bank), so drawn without a card of its own.
+function Lines({ lines, meta, onToggle, onOpen, empty, locked, flat }: { lines: Line[]; meta?: (l: Line) => React.ReactNode; onToggle: (l: Line) => void; onOpen: (l: Line) => void; empty: string; locked?: boolean; flat?: boolean }) {
   if (!lines.length) return <p className="empty card">{empty}</p>;
   return (
-    <ul className="card task-list money-lines">
+    <ul className={`task-list money-lines ${flat ? "is-flat" : "card"}`}>
       {lines.map((l) => {
         const verb = l.item.kind === "expense" ? "paid" : "received";
         return (
           <li key={l.item.id} className={`task-row ${l.paid ? "is-done" : ""} ${l.skipped ? "is-skipped" : ""}`}>
             <button className={`task-check ${l.paid ? "is-checked" : ""}`} disabled={l.skipped || locked} aria-pressed={l.paid} aria-label={`${l.item.name}: ${l.paid ? `mark not ${verb}` : `mark ${verb}`}`} onClick={() => onToggle(l)}>{l.paid ? "✓" : ""}</button>
+            {/* The due date as a small calendar leaf: the day over its weekday. An item due many times shows how many. */}
+            <span className="line-date" role="img" aria-label={dueLabel(l)}>
+              {l.dates.length > 1 ? <><strong>×{l.dates.length}</strong><span>times</span></> : <><strong>{DateTime.fromISO(l.dates[0]).toFormat("d")}</strong><span>{DateTime.fromISO(l.dates[0]).toFormat("ccc")}</span></>}
+            </span>
             <button className="task-main" onClick={() => onOpen(l)}>
               <span className="task-title">{l.item.name}</span>
-              <span className="task-due">{l.skipped ? "Skipped this month" : meta(l)}</span>
+              {(l.skipped || meta) && <span className="task-due line-meta">{l.skipped ? "Skipped" : meta!(l)}</span>}
             </button>
             <span className="money-amt">
               <strong>{inr(expected(l))}</strong>
@@ -96,86 +101,142 @@ function Lines({ lines, meta, onToggle, onOpen, empty, locked }: { lines: Line[]
   );
 }
 
-/** A labelled amount with a bar: its length is the amount's share of the largest in the list. */
-function Bar({ label, amount, of, note, tone }: { label: string; amount: number; of: number; note?: string; tone?: "short" }) {
+type Part = { key: string; tone: string | null; value: number };
+/** A ring cut into shares, largest first from the top. What sits in the middle is the caller's. */
+function Ring({ parts, children }: { parts: Part[]; children: React.ReactNode }) {
+  const total = parts.reduce((s, p) => s + p.value, 0);
+  const gap = parts.length > 1 ? 1.2 : 0;
+  let at = 0;
   return (
-    <li className={`money-bar ${tone === "short" ? "is-short" : ""}`}>
-      <span className="money-bar-head"><span>{label}</span><span><strong>{inr(amount)}</strong>{note && <span className="muted"> {note}</span>}</span></span>
-      <span className="money-bar-track" aria-hidden><span style={{ width: `${of > 0 ? Math.max(2, Math.round((Math.abs(amount) / of) * 100)) : 0}%` }} /></span>
-    </li>
+    <div className="ins-ring">
+      {/* r = 15.915 makes the circle 100 units round, so a share's length is its percentage. */}
+      <svg viewBox="0 0 42 42" aria-hidden>
+        <circle className="ins-ring-track" cx="21" cy="21" r="15.915" />
+        {total > 0 && parts.map((p) => {
+          const pct = (p.value / total) * 100;
+          const arc = <circle key={p.key} className={p.tone ? `act-${p.tone}` : "is-none"} cx="21" cy="21" r="15.915" strokeDasharray={`${Math.max(0.5, pct - gap)} ${100 - Math.max(0.5, pct - gap)}`} strokeDashoffset={-at} transform="rotate(-90 21 21)" />;
+          at += pct;
+          return arc;
+        })}
+      </svg>
+      <div className="ins-ring-mid">{children}</div>
+    </div>
   );
 }
 
-/** What the budget in view says: who the month's money goes on, where it goes, which bank runs short, and the year ahead. */
+/** What the budget in view says, drawn: who the month's money goes on, where it goes, what each bank is left with, and the year ahead. */
 function Insights({ lines, view, ym }: { lines: Line[]; view: MoneyCtx; ym: string }) {
+  const [pick, setPick] = useState(0); // the month of the year ahead whose figures are spelled out
   const people = byPerson(lines);
   const types = byType(lines);
-  const spend = totals(lines, "expense");
   const total = people.reduce((s, p) => s + p.amount, 0);
-  const personName = new Map(view.people.map((p) => [p.id, p.name]));
-  const typeName = new Map(view.types.map((t) => [t.id, t.name]));
-  const banks = view.banks.filter((b) => !b.archived_at).map((b) => ({ b, pos: bankPosition(b, lines) }));
+  // The same colours as in Setup: a person or a type keeps its colour across the two screens.
+  const personAt = new Map(view.people.map((p, n) => [p.id, { name: p.name, tone: TONES[n % TONES.length] }]));
+  const typeAt = new Map([...view.types].sort((a, b) => a.kind.localeCompare(b.kind)).map((t, n) => [t.id, { name: t.name, tone: TONES[n % TONES.length] }]));
+  const banks = view.banks.filter((b) => !b.archived_at).map((b, n) => ({ b, pos: bankPosition(b, lines), tone: TONES[view.banks.indexOf(b) % TONES.length], n }));
   const ahead = forecast(view.items, view.entries, view.increases, ym);
-  const peak = Math.max(...ahead.map((m) => Math.max(m.income, m.expense)), 1);
+  const reach = Math.max(...ahead.map((m) => Math.abs(m.left)), 1);
   const year = ahead.reduce((s, m) => s + m.left, 0);
-  const worst = ahead.filter((m) => m.left < 0);
+  const shown = ahead[Math.min(pick, ahead.length - 1)];
+  const typeMax = Math.max(...types.map((t) => Math.max(t.budget, t.actual + t.due)), 1);
   if (!view.items.length) return <p className="empty card">Nothing to show yet. Add an income or an expense first.</p>;
 
   return (
-    <>
-      <section className="card stack">
-        <div className="page-head"><h2>Spent on each person</h2><span className="muted">{inr(total)} in {monthLabel(ym)}</span></div>
+    <div className="ins">
+      <section className="card ins-card">
+        <h2>Who it is for</h2>
         {people.length === 0 ? <p className="empty">No expenses in {monthLabel(ym)}.</p> : (
-          <ul className="money-bars">
-            {people.map((p) => <Bar key={p.id ?? "none"} label={p.id ? personName.get(p.id) ?? "Someone removed" : "Nobody in particular"} amount={p.amount} of={people[0].amount} note={total > 0 ? `${Math.round((p.amount / total) * 100)}%` : undefined} />)}
-          </ul>
+          <div className="ins-split">
+            <Ring parts={people.map((p) => ({ key: p.id ?? "none", tone: p.id ? personAt.get(p.id)?.tone ?? null : null, value: p.amount }))}>
+              <strong>{inr(total)}</strong>
+              <span>spent</span>
+            </Ring>
+            <ul className="ins-legend">
+              {people.map((p) => {
+                const who = p.id ? personAt.get(p.id) : undefined;
+                const name = p.id ? who?.name ?? "Someone removed" : "Nobody in particular";
+                return (
+                  <li key={p.id ?? "none"}>
+                    <span className={`ins-face ${who ? `act-${who.tone}` : "is-none"}`} aria-hidden>{who ? name[0].toUpperCase() : ""}</span>
+                    <span className="ins-name">{name}</span>
+                    <strong>{total > 0 ? Math.round((p.amount / total) * 100) : 0}%</strong>
+                    <span className="ins-amt">{inr(p.amount)}</span>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
         )}
-        <p className="hint">An expense for several people is split equally between them. Choose who an expense is for when you add or edit it.</p>
       </section>
 
-      <section className="card stack">
-        <div className="page-head"><h2>Where it goes</h2><span className="muted">{inr(spend.actual)} paid of {inr(spend.budget)}</span></div>
+      <section className="card ins-card">
+        <h2>Where it goes</h2>
         {types.length === 0 ? <p className="empty">No expenses in {monthLabel(ym)}.</p> : (
-          <ul className="money-bars">
+          <ul className="ins-types">
             {types.map((t) => {
-              const over = t.actual + t.due - t.budget; // what the month will come to, against its budget
-              return <Bar key={t.id ?? "none"} label={t.id ? typeName.get(t.id) ?? "A removed type" : "No type"} amount={t.budget} of={types[0].budget} tone={over > 0 ? "short" : undefined}
-                note={over > 0 ? `${inr(over)} over` : over < 0 ? `${inr(-over)} under` : t.actual > 0 ? `${inr(t.actual)} paid` : undefined} />;
+              const kind = t.id ? typeAt.get(t.id) : undefined;
+              const end = t.actual + t.due; // what the month will come to
+              const over = end - t.budget;
+              return (
+                <li key={t.id ?? "none"} className={over > 0 ? "is-over" : ""}>
+                  <span className="ins-row"><span className="ins-name">{t.id ? kind?.name ?? "A removed type" : "No type"}</span>{over > 0 && <span className="ins-over">+{inr(over)}</span>}<strong>{inr(Math.max(t.budget, end))}</strong></span>
+                  {/* The track is the budget, sized against the largest type. The solid part is paid; anything past the budget runs on in red. */}
+                  <span className={`ins-track ${kind ? `act-${kind.tone}` : "is-none"}`} style={{ width: `${Math.max(6, (Math.max(t.budget, end) / typeMax) * 100)}%` }} role="img" aria-label={`${inr(t.actual)} paid of ${inr(t.budget)} budgeted${over > 0 ? `, ${inr(over)} over` : ""}`}>
+                    <span className="ins-paid" style={{ width: `${Math.max(t.budget, end) > 0 ? (Math.min(t.actual, t.budget) / Math.max(t.budget, end)) * 100 : 0}%` }} />
+                    {over > 0 && <span className="ins-spill" style={{ width: `${(over / end) * 100}%` }} />}
+                  </span>
+                </li>
+              );
             })}
           </ul>
         )}
+        <p className="ins-key"><span><i className="is-paid" />paid</span><span><i className="is-plan" />still to pay</span><span><i className="is-spill" />over budget</span></p>
       </section>
 
       {banks.length > 0 && (
-        <section className="card stack">
-          <div className="page-head"><h2>Banks after {monthLabel(ym)}</h2></div>
-          <ul className="money-bars">
-            {banks.map(({ b, pos }) => <Bar key={b.id} label={b.name} amount={Math.abs(pos.after)} of={Math.max(...banks.map((x) => Math.abs(x.pos.after)), 1)} tone={pos.after < 0 ? "short" : undefined} note={pos.after < 0 ? "short" : "left"} />)}
+        <section className="ins-wide">
+          <h2>What each bank is left with</h2>
+          <ul className="ins-banks">
+            {banks.map(({ b, pos, tone }) => {
+              const full = Math.max(Number(b.balance) + pos.incomeDue, pos.expenseDue, 1);
+              const short = pos.after < 0;
+              return (
+                <li key={b.id} className={`card ${short ? "is-short" : ""}`}>
+                  <span className="ins-bank-top"><span className={`kit-mono act-${tone}`}>{b.name.trim()[0]?.toUpperCase()}</span><span className="ins-name">{b.name}</span></span>
+                  <strong className="ins-bank-left">{short ? "− " : ""}{inr(Math.abs(pos.after))}</strong>
+                  {/* A tank: what the account holds and expects, with this month's unpaid bills drained off the top. */}
+                  <span className="ins-tank" role="img" aria-label={`${inr(Number(b.balance))} now${pos.incomeDue ? `, ${inr(pos.incomeDue)} to come` : ""}, ${inr(pos.expenseDue)} still to pay`}>
+                    <span className="ins-tank-keep" style={{ width: `${short ? 0 : (pos.after / full) * 100}%` }} />
+                    <span className="ins-tank-out" style={{ width: `${(Math.min(pos.expenseDue, full) / full) * 100}%` }} />
+                  </span>
+                  <span className="ins-sub">{short ? "short after bills" : pos.expenseDue > 0 ? `after ${inr(pos.expenseDue)} of bills` : "nothing left to pay"}</span>
+                </li>
+              );
+            })}
           </ul>
         </section>
       )}
 
-      <section className="card stack">
-        <div className="page-head"><h2>The year ahead</h2><span className={year < 0 ? "overdue-label" : "muted"}>{year < 0 ? `${inr(-year)} short over 12 months` : `${inr(year)} left over 12 months`}</span></div>
-        <ol className="money-year">
-          {ahead.map((m) => (
-            <li key={m.ym} className={m.left < 0 ? "is-short" : ""}>
-              <span className="money-year-month">{monthLabel(m.ym).replace(/^(\w{3})\w*/, "$1")}</span>
-              <span className="money-year-bars" aria-hidden>
-                <span className="is-in" style={{ width: `${(m.income / peak) * 100}%` }} />
-                <span className="is-out" style={{ width: `${(m.expense / peak) * 100}%` }} />
-              </span>
-              <span className="money-year-left">{m.left < 0 ? "− " : ""}{inr(Math.abs(m.left))}</span>
-              <span className="sr-only">Income {inr(m.income)}, expenses {inr(m.expense)}.</span>
+      <section className="card ins-card ins-wide">
+        <div className="ins-row"><h2>The year ahead</h2><strong className={year < 0 ? "is-short" : "is-left"}>{year < 0 ? "− " : "+ "}{inr(Math.abs(year))}</strong></div>
+        {/* A column a month, from a middle line: up is what the month leaves, down is what it falls short by. */}
+        <ol className="ins-year">
+          {ahead.map((m, n) => (
+            <li key={m.ym}>
+              <button className={`${m.left < 0 ? "is-short" : ""} ${n === pick ? "is-picked" : ""}`} aria-pressed={n === pick} aria-label={`${monthLabel(m.ym)}: ${m.left < 0 ? `short by ${inr(-m.left)}` : `${inr(m.left)} left`}`} onClick={() => setPick(n)}>
+                <span className="ins-col"><span style={{ height: `${Math.max(m.left === 0 ? 0 : 2, (Math.abs(m.left) / reach) * 50)}%` }} /></span>
+                <span className="ins-month">{DateTime.fromISO(`${m.ym}-01`).toFormat("LLLLL")}</span>
+              </button>
             </li>
           ))}
         </ol>
-        <p className="hint">
-          Upper bar: income. Lower bar: expenses. The figure is what the month leaves. Yearly increases are applied from each item’s anniversary.
-          {worst.length > 0 && ` ${worst.length === 1 ? `${monthLabel(worst[0].ym)} spends` : `${worst.length} months spend`} more than comes in.`}
-        </p>
+        <dl className="ins-picked">
+          <div><dt>{monthLabel(shown.ym)}</dt><dd className={shown.left < 0 ? "is-short" : "is-left"}>{shown.left < 0 ? "− " : "+ "}{inr(Math.abs(shown.left))}</dd></div>
+          <div><dt>In</dt><dd>{inr(shown.income)}</dd></div>
+          <div><dt>Out</dt><dd>{inr(shown.expense)}</dd></div>
+        </dl>
       </section>
-    </>
+    </div>
   );
 }
 
@@ -302,11 +363,39 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
     );
   }
 
-  const bankName = new Map(view.banks.map((b) => [b.id, b.name]));
-  const typeName = new Map(view.types.map((t) => [t.id, t.name]));
-  const meta = (l: Line) => [dueLabel(l), l.item.bank_id && bankName.get(l.item.bank_id), l.item.type_id && typeName.get(l.item.type_id)].filter(Boolean).join(" · ");
   const income = totals(lines, "income");
   const spend = totals(lines, "expense");
+  const bankAt = new Map(view.banks.map((b, n) => [b.id, { name: b.name, tone: TONES[n % TONES.length] }]));
+  const typeName = new Map(view.types.map((t) => [t.id, t.name]));
+  // Under a line's name: its bank as the coloured letter it has everywhere else, then its type.
+  const meta = (l: Line) => {
+    const bank = l.item.bank_id ? bankAt.get(l.item.bank_id) : undefined;
+    const type = l.item.type_id ? typeName.get(l.item.type_id) : undefined;
+    if (!bank && !type) return null;
+    return <>{bank && <span className={`kit-mono is-mini act-${bank.tone}`} title={bank.name} aria-label={bank.name}>{bank.name.trim()[0]?.toUpperCase()}</span>}{type ?? bank?.name}</>;
+  };
+  const scale = Math.max(income.budget, spend.budget, 1);
+  // One row of the month's summary: a track as long as the budget, solid for what has already moved.
+  const flow = (label: string, t: typeof income, cls: string, done: string) => (
+    <div className={`sum-row ${cls}`}>
+      <span>{label}</span>
+      <span className="sum-track" style={{ width: `${Math.max(3, (t.budget / scale) * 100)}%` }} role="img" aria-label={`${inr(t.actual)} ${done} of ${inr(t.budget)}`}>
+        <span style={{ width: `${t.budget > 0 ? Math.min(100, (t.actual / t.budget) * 100) : 0}%` }} />
+      </span>
+      <strong>{inr(t.budget)}</strong>
+    </div>
+  );
+  // A section's heading: its name, a dot a line (filled once paid or received), and the button that adds one.
+  const head = (title: string, kind: MoneyKind) => {
+    const own = lines.filter((l) => l.item.kind === kind);
+    return (
+      <div className="page-head line-head">
+        <h2>{title}</h2>
+        {own.length > 0 && <span className="bank-dots" role="img" aria-label={`${own.filter((l) => l.paid).length} of ${own.length} ${kind === "expense" ? "paid" : "received"}`}>{own.map((l) => <i key={l.item.id} className={l.paid ? "is-paid" : l.skipped ? "is-skipped" : ""} />)}</span>}
+        {canEdit && <button className="btn btn-sm" aria-label={`Add ${kind === "expense" ? "an expense" : "an income"}`} onClick={() => setPanel({ kind: "item", as: kind })}>＋</button>}
+      </div>
+    );
+  };
   const left = income.budget - spend.budget;
   const next = shiftMonth(nowYm, 1);
 
@@ -379,31 +468,29 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
             {tab === "month" && (
               <>
                 {monthBar}
-                <dl className="card money-sum">
-                  <div><dt>Income</dt><dd>{inr(income.budget)}</dd><span>{inr(income.actual)} received</span></div>
-                  <div><dt>Expenses</dt><dd>{inr(spend.budget)}</dd><span>{inr(spend.actual)} paid</span></div>
-                  <div className={left < 0 ? "is-short" : ""}><dt>{left < 0 ? "Short by" : "Left over"}</dt><dd>{inr(Math.abs(left))}</dd><span>{left < 0 ? "Expenses are above income" : "After every planned expense"}</span></div>
-                </dl>
+                <section className={`card month-sum ${left < 0 ? "is-short" : ""}`}>
+                  <p className="sum-left"><strong>{left < 0 ? "− " : ""}{inr(Math.abs(left))}</strong> {left < 0 ? "short" : "left"}</p>
+                  {flow("In", income, "is-in", "received")}
+                  {flow("Out", spend, "is-out", "paid")}
+                  <p className="ins-key"><span><i className="is-paid" />done</span><span><i className="is-plan" />still to come</span></p>
+                </section>
 
                 {isPlanned(ym) ? (
-                  <p className="money-plan"><span className="status-badge">✓ Planned{scope ? " by everyone" : ""}</span> {canEdit && <button className="link" onClick={() => setPlanned(false)}>Reopen</button>}</p>
+                  <p className="money-plan"><span className="plan-pill is-on">✓ Planned{scope ? " by everyone" : ""}</span>{canEdit && <button className="link" onClick={() => setPlanned(false)}>Reopen</button>}</p>
                 ) : iMarked(ym) ? (
-                  <p className="money-plan"><span className="muted">You marked {monthLabel(ym)} as planned. Waiting for {notYet.join(", ")}.</span> <button className="link" onClick={() => setPlanned(false)}>Undo</button></p>
+                  <p className="money-plan"><span className="plan-pill">✓ You</span><span className="muted">Waiting for {notYet.join(", ")}</span><button className="link" onClick={() => setPlanned(false)}>Undo</button></p>
                 ) : ym > nowYm && canEdit ? (
-                  <div className="money-plan">
-                    <span className="muted grow">{scope ? `Check each line, then mark the month as planned. It is planned once everyone in ${scope.name} has.` : "Check each line, change this month’s amounts where needed, then mark the month as planned."}</span>
-                    <button className="btn" disabled={!lines.length} onClick={() => setPlanned(true)}>Mark as planned</button>
-                  </div>
+                  <p className="money-plan"><button className="btn" disabled={!lines.length} onClick={() => setPlanned(true)}>Mark {monthLabel(ym).split(" ")[0]} as planned</button>{scope && <span className="muted">Everyone in {scope.name} marks it</span>}</p>
                 ) : ym === nowYm && !isPlanned(next) && view.items.length > 0 ? (
-                  <p className="money-plan"><span className="muted">{monthLabel(next)} is not planned yet.</span> <button className="link" onClick={() => setPicked(next)}>Review it</button></p>
+                  <p className="money-plan"><button className="chip chip-dashed" onClick={() => setPicked(next)}>Plan {monthLabel(next).split(" ")[0]}</button></p>
                 ) : null}
 
                 {scope && <Requests ctx={ctx} money={money} scope={scope} canEdit={canEdit} onAgain={(p) => setPanel({ kind: "item", id: p.item_id ?? undefined, again: p })} />}
 
-                <div className="page-head"><h2>Expenses</h2>{canEdit && <button className="btn btn-sm" onClick={() => setPanel({ kind: "item", as: "expense" })}>＋ Expense</button>}</div>
-                <Lines lines={lines.filter((l) => l.item.kind === "expense")} meta={meta} onToggle={togglePaid} onOpen={openLine} locked={!canEdit} empty={`No expenses in ${monthLabel(ym)}.`} />
-                <div className="page-head"><h2>Income</h2>{canEdit && <button className="btn btn-sm" onClick={() => setPanel({ kind: "item", as: "income" })}>＋ Income</button>}</div>
+                {head("Income", "income")}
                 <Lines lines={lines.filter((l) => l.item.kind === "income")} meta={meta} onToggle={togglePaid} onOpen={openLine} locked={!canEdit} empty={`No income in ${monthLabel(ym)}.`} />
+                {head("Expenses", "expense")}
+                <Lines lines={lines.filter((l) => l.item.kind === "expense")} meta={meta} onToggle={togglePaid} onOpen={openLine} locked={!canEdit} empty={`No expenses in ${monthLabel(ym)}.`} />
               </>
             )}
 
@@ -414,26 +501,44 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
                 {view.banks.filter((b) => !b.archived_at).map((b) => {
                   const pos = bankPosition(b, lines);
                   const out = lines.filter((l) => l.item.bank_id === b.id && l.item.kind === "expense");
+                  const balance = Number(b.balance);
+                  const full = Math.max(balance + pos.incomeDue, 1); // everything the account holds or expects this month
+                  const short = pos.after < 0;
                   return (
-                    <section key={b.id} className="card stack">
-                      <div className="page-head"><h2>{b.name}</h2><span className="muted">{b.balance_at ? `Balance as of ${DateTime.fromISO(b.balance_at).toFormat("d LLL")}` : "Balance not set"}{scope ? `, kept by ${nameOf(scope, b.user_id ?? "", ctx.userId).replace("You", "you")}` : ""}</span></div>
-                      <dl className="money-ledger">
-                        <div><dt>Balance</dt><dd>{inr(Number(b.balance))}</dd></div>
-                        <div><dt>Income still to come</dt><dd>+ {inr(pos.incomeDue)}</dd></div>
-                        <div><dt>Expenses still to pay</dt><dd>− {inr(pos.expenseDue)}</dd></div>
-                        <div className={`is-total ${pos.after < 0 ? "is-short" : ""}`}><dt>{pos.after < 0 ? "Short by" : `Left after ${monthLabel(ym)}`}</dt><dd>{inr(Math.abs(pos.after))}</dd></div>
-                      </dl>
-                      <Lines lines={out} meta={dueLabel} onToggle={togglePaid} onOpen={openLine} locked={!canEdit} empty={`No expenses from ${b.name} in ${monthLabel(ym)}.`} />
+                    <section key={b.id} className={`card bank ${short ? "is-short" : ""}`}>
+                      <div className="bank-head">
+                        <span className={`kit-mono act-${TONES[view.banks.indexOf(b) % TONES.length]}`} aria-hidden>{b.name.trim()[0]?.toUpperCase()}</span>
+                        <h2>{b.name}</h2>
+                        <span className="bank-date">{b.balance_at ? DateTime.fromISO(b.balance_at).toFormat("d LLL") : "no balance yet"}{scope ? `, ${nameOf(scope, b.user_id ?? "", ctx.userId).replace("You", "you")}` : ""}</span>
+                      </div>
+                      <p className="bank-left"><strong>{short ? "− " : ""}{inr(Math.abs(pos.after))}</strong> {short ? "short" : "left"}</p>
+                      {/* One bar for the month: what is in the account, what is still to arrive, and the unpaid bills struck off the end. */}
+                      <div className="bank-bar" role="img" aria-label={`${inr(balance)} in the account, ${inr(pos.incomeDue)} still to come, ${inr(pos.expenseDue)} still to pay`}>
+                        <span className="is-now" style={{ width: `${(Math.max(balance, 0) / full) * 100}%` }} />
+                        <span className="is-coming" style={{ width: `${(pos.incomeDue / full) * 100}%` }} />
+                        <span className="is-bills" style={{ width: `${Math.min(100, (pos.expenseDue / full) * 100)}%` }} />
+                      </div>
+                      <ul className="bank-key">
+                        <li><i className="is-now" />{inr(balance)} now</li>
+                        {pos.incomeDue > 0 && <li><i className="is-coming" />{inr(pos.incomeDue)} coming</li>}
+                        {pos.expenseDue > 0 && <li><i className="is-bills" />{inr(pos.expenseDue)} to pay</li>}
+                      </ul>
+                      {out.length > 0 && (
+                        <>
+                          {/* A dot a bill, filled once it is paid. */}
+                          <p className="bank-dots" role="img" aria-label={`${out.filter((l) => l.paid).length} of ${out.length} bills paid`}>{out.map((l) => <i key={l.item.id} className={l.paid ? "is-paid" : l.skipped ? "is-skipped" : ""} />)}</p>
+                          <Lines flat lines={out} onToggle={togglePaid} onOpen={openLine} locked={!canEdit} empty="" />
+                        </>
+                      )}
                     </section>
                   );
                 })}
                 {lines.some((l) => !l.item.bank_id) && (
-                  <section className="card stack">
-                    <div className="page-head"><h2>No bank chosen</h2></div>
-                    <Lines lines={lines.filter((l) => !l.item.bank_id)} meta={dueLabel} onToggle={togglePaid} onOpen={openLine} locked={!canEdit} empty="" />
+                  <section className="card bank">
+                    <div className="bank-head"><span className="kit-mono is-none" aria-hidden>?</span><h2>No bank chosen</h2></div>
+                    <Lines flat lines={lines.filter((l) => !l.item.bank_id)} onToggle={togglePaid} onOpen={openLine} locked={!canEdit} empty="" />
                   </section>
                 )}
-                <p className="hint">Balances are the ones typed in. {scope ? "Each bank’s balance is updated in Setup by the person who added it." : "Update a balance in Setup after checking your bank."}</p>
               </>
             )}
 
