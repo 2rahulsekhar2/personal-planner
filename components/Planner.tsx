@@ -22,6 +22,8 @@ import ActivityView from "./ActivityView";
 import { useCircles } from "./useCircles";
 import { canAdd, isCurrent, isOpen, seatsOf } from "@/lib/circles";
 import { registerServiceWorker } from "@/lib/push-client";
+import MoneyView from "./MoneyView";
+import { useMoney, type Mode } from "./useMoney";
 
 export type View = "week" | "agenda" | "tasks" | "types" | "places" | "settings" | "circles" | "activity";
 
@@ -65,6 +67,21 @@ export default function Planner() {
   const [menu, setMenu] = useState(false);
   const circles = useCircles(ctx.supabase);
   const [inviteToken, setInviteToken] = useState<string | null>(null);
+  // The two sides of the app. Null until Money has said which side was open last.
+  const money = useMoney(ctx);
+  const [mode, setMode] = useState<Mode | null>(null);
+  const linked = useRef(false); // arrived by an invite or password link: those open on the Time side
+  useEffect(() => {
+    if (money.status === "loading") return;
+    setMode((m) => m ?? (money.status === "on" && money.lastMode === "money" && !linked.current ? "money" : "time"));
+  }, [money.status, money.lastMode]);
+  const switchMode = (m: Mode) => {
+    setMode(m);
+    setPanel(null);
+    if (view === "settings") setView(beforeSettings.current);
+    // Money that is not on yet is only a visit to its front door: nothing to remember.
+    if (m === "time" || money.status === "on") money.rememberMode(m);
+  };
   const myEmail = ctx.email?.toLowerCase();
   const pendingInvites = circles.invites.filter((i) => i.email === myEmail && isOpen(i)).length;
 
@@ -120,6 +137,7 @@ export default function Planner() {
     // An invite link lands on /?invite=TOKEN. If sign-in came first, the login page kept the token for us.
     const invite = params.get("invite") ?? localStorage.getItem("pending-invite");
     localStorage.removeItem("pending-invite");
+    linked.current = !!invite || params.has("password");
     if (invite) {
       setInviteToken(invite);
       window.history.replaceState(null, "", "/");
@@ -215,7 +233,10 @@ export default function Planner() {
     ) : <TaskForm ctx={ctx} circles={shareable(t.circle_id)} existing={t} onDone={closePanel} />;
   }
 
-  if (loading || !view) {
+  // Settings belongs to both sides; everything else on screen follows the mode.
+  const showMoney = mode === "money" && view !== "settings";
+
+  if (loading || !view || !mode) {
     return (
       <div className="center-screen muted" role="status">
         <div className="loading-mark">
@@ -233,6 +254,11 @@ export default function Planner() {
           <img src="/icon.svg" alt="" width={26} height={26} />
           Planner
         </button>
+        <div className="view-toggle mode-toggle" role="group" aria-label="Side of the planner">
+          {(["time", "money"] as const).map((m) => (
+            <button key={m} className={mode === m ? "is-active" : ""} aria-pressed={mode === m} onClick={() => switchMode(m)}>{m === "time" ? "Time" : "Money"}</button>
+          ))}
+        </div>
         <div className="topbar-right">
           <button className={`icon-btn nav-settings ${view === "settings" ? "is-active" : ""}`} aria-label={remindersOff ? `Settings: ${STATUS_LABEL[status!]}` : "Settings"} title={remindersOff ? STATUS_LABEL[status!] : "Settings"} aria-current={view === "settings" ? "page" : undefined} onClick={toggleSettings}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
@@ -246,7 +272,7 @@ export default function Planner() {
       </header>
 
       {/* Outside the header: the header blurs what is behind it, and a blurred ancestor would pin this fixed button to itself. */}
-      <div className="add-wrap" ref={addRef}>
+      {!showMoney && <div className="add-wrap" ref={addRef}>
         <button className="btn btn-primary btn-add" aria-haspopup="menu" aria-expanded={menu} onClick={() => setMenu(!menu)}>
           <svg className="add-plus" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
           <span className="add-text">Add</span>
@@ -272,7 +298,7 @@ export default function Planner() {
             ))}
           </div>
         )}
-      </div>
+      </div>}
 
       {loadError && (
         <div className="alert alert-error banner" role="alert">
@@ -280,7 +306,7 @@ export default function Planner() {
         </div>
       )}
 
-      <main className={`main ${panel ? "has-panel" : ""}`}>
+      {showMoney ? <MoneyView ctx={ctx} money={money} /> : <main className={`main ${panel ? "has-panel" : ""}`}>
         <section className="content">
           {view === "week" && (
             <div className="week-layout">
@@ -303,7 +329,7 @@ export default function Planner() {
             {panelBody}
           </Panel>
         )}
-      </main>
+      </main>}
 
       <div className="toasts" aria-live="polite">
         {toasts.map((t) => (

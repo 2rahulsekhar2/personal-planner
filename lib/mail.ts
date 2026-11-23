@@ -35,3 +35,10 @@ export async function sendInviteEmail(m: InviteMail) {
   const transport = nodemailer.createTransport({ service: "gmail", auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD } });
   await transport.sendMail({ from: `"Planner" <${process.env.GMAIL_USER}>`, to: m.to, replyTo: m.inviterEmail, ...buildInviteEmail(m) });
 }
+
+/** The code that turns Money on. It goes only to the signed-in person's own address. */
+export async function sendMoneyCodeEmail(to: string, code: string) {
+  const transport = nodemailer.createTransport({ service: "gmail", auth: { user: process.env.GMAIL_USER, pass: process.env.GMAIL_APP_PASSWORD } });
+  const text = `Your code to turn on Money in Planner is ${code}. It works for 10 minutes.\n\nIf you did not ask for this, ignore this email.`;
+  await transport.sendMail({ from: `"Planner" <${process.env.GMAIL_USER}>`, to, subject: `${code} is your Planner Money code`, text });
+}
