@@ -116,19 +116,19 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
     e.preventDefault();
     if (saving) return;
     if (!name.trim()) return setError("Give it a name.");
-    if (value === null) return setError("Enter the amount as a number, for example 1499.");
-    if (!start) return setError("Choose a date.");
-    if (!bank) return setError(`Choose the bank it ${expense ? "is paid from" : "comes into"}.`);
-    if (!type) return setError(`Choose ${expense ? "an expense" : "an income"} type.`);
-    if (freq !== "once" && end && end < start) return setError("The last date is before the first.");
+    // A loan's own figures first: the EMI is worked out from them.
     if (isLoan) {
       if (loanText.principal === null || loanText.principal <= 0) return setError("Enter the amount taken as a number, for example 500000.");
       if (!(loanText.rate >= 0 && loanText.rate < 100)) return setError("Enter the interest for a year as a percentage, for example 9.5. Use 0 for none.");
       if (!(loanText.months >= 1 && loanText.months <= 600)) return setError("Enter the tenure as a number of months, for example 60.");
       if (owed.trim() && owedValue === null) return setError("Enter the balance as a number.");
       if (!!owed.trim() !== !!owedOn) return setError("Give the lender’s balance both a figure and a date, or leave both empty.");
-      if (value <= 0) return setError("Enter the EMI as a number.");
     }
+    if (value === null || (isLoan && value <= 0)) return setError("Enter the amount as a number, for example 1499.");
+    if (!start) return setError("Choose a date.");
+    if (!bank) return setError(`Choose the bank it ${expense ? "is paid from" : "comes into"}.`);
+    if (!type) return setError(`Choose ${expense ? "an expense" : "an income"} type.`);
+    if (freq !== "once" && end && end < start) return setError("The last date is before the first.");
     // A one-time item has one amount. Otherwise each change needs a date after the first date, its own day, and a figure.
     const changes = freq === "once" ? [] : steps.map((x) => ({ from: x.from, amount: parseAmount(x.amount) }));
     if (changes.some((x) => !x.from || x.amount === null)) return setError("Give each change of amount a date and a figure, or remove it.");
