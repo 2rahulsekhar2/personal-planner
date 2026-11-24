@@ -330,6 +330,13 @@ export function monthLines(items: MoneyItem[], entries: MoneyEntry[], increases:
 
 /** What a line is expected to come to: the actual amount once known, the budget until then. */
 export const expected = (l: Line) => l.actual ?? l.budget;
+/** What the month before `nowYm` left open: its lines neither paid or received, nor skipped. Each has to be answered once the new month starts. */
+export const carryOver = (items: MoneyItem[], entries: MoneyEntry[], increases: Increase[], nowYm: string) => monthLines(items, entries, increases, shiftMonth(nowYm, -1)).filter((l) => !l.paid && !l.skipped);
+/** A repeating item's open month carried into this one: a one-time item for what was due, named after the month it came from. */
+export const carried = (l: Line, fromYm: string, today: string) => ({
+  kind: l.item.kind, name: `${l.item.name} (${monthLabel(fromYm).split(" ")[0]})`, amount: expected(l), freq: "once" as const, start_date: today, end_date: null,
+  bank_id: l.item.bank_id, type_id: l.item.type_id, increase_id: null, person_ids: l.item.person_ids, notes: l.item.notes,
+});
 /** What has really moved: the actual amount, or the budget for a line marked paid without one. Nothing until then. */
 export const settled = (l: Line) => l.actual ?? (l.paid ? l.budget : 0);
 
