@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { amountIn, amountOn, amountPeriods, bankPosition, byPerson, byType, forecast, linesDueOn, waitingOn, datesInMonth, monthLines, parseAmount, shiftMonth, totals, type MoneyEntry, type MoneyItem } from "@/lib/money";
+import { loanEmi, loanNow, loanSchedule, amountIn, amountOn, amountPeriods, bankPosition, byPerson, byType, forecast, linesDueOn, waitingOn, datesInMonth, monthLines, parseAmount, shiftMonth, totals, type MoneyEntry, type MoneyItem } from "@/lib/money";
 
 const item = (over: Partial<MoneyItem>): MoneyItem => ({
   id: "i1", kind: "expense", name: "Wifi bill", amount: 1000, freq: "monthly", start_date: "2026-01-15", end_date: null,
@@ -177,5 +177,67 @@ describe("an amount that changes from a date", () => {
   it("ignores a change dated on or before the first date, and an item with none", () => {
     expect(amountIn(item({ amount: 500, start_date: "2026-01-15", amount_steps: [{ from: "2026-01-15", amount: 900 }] }), "2026-06-01").amount).toBe(500);
     expect(amountIn(item({ amount: 500, amount_steps: null }), "2026-06-01").amount).toBe(500);
+  });
+});
+
+describe("a loan", () => {
+  const loan = (over: Partial<MoneyItem> = {}, l: Partial<NonNullable<MoneyItem["loan"]>> = {}) =>
+    item({ id: "loan", kind: "expense", freq: "monthly", start_date: "2026-01-05", loan: { principal: 100000, rate: 12, kind: "reducing", months: 12, ...l }, ...over, amount: over.amount ?? loanEmi({ principal: 100000, rate: 12, kind: "reducing", months: 12, ...l }) });
+
+  it("works out the usual EMI, to the next rupee", () => {
+    expect(loanEmi({ principal: 100000, rate: 12, kind: "reducing", months: 12 })).toBe(8885);
+    expect(loanEmi({ principal: 120000, rate: 10, kind: "flat", months: 12 })).toBe(11000);
+    expect(loanEmi({ principal: 120000, rate: 0, kind: "reducing", months: 12 })).toBe(10000);
+    expect(loanEmi({ principal: 0, rate: 10, kind: "reducing", months: 12 })).toBe(0);
+  });
+
+  it("pays interest first, the rest off what is owed, and ends on the remainder", () => {
+    const rows = loanSchedule(loan());
+    expect(rows).toHaveLength(12);
+    expect(rows[0]).toEqual({ date: "2026-01-05", pay: 8885, interest: 1000, balance: 92115 });
+    expect(rows[11].balance).toBe(0);
+    expect(rows[11].pay).toBeLessThanOrEqual(8885);
+    expect(rows[11].pay).toBeGreaterThan(8800);
+  });
+
+  it("charges flat interest on the amount taken every month", () => {
+    const rows = loanSchedule(loan({}, { principal: 120000, rate: 10, kind: "flat" }));
+    expect(rows).toHaveLength(12);
+    expect(rows.every((r) => r.interest === 1000 && r.pay === 11000)).toBe(true);
+    expect(rows[11].balance).toBe(0);
+  });
+
+  it("a bigger EMI from a date ends it sooner", () => {
+    const rows = loanSchedule(loan({ amount_steps: [{ from: "2026-04-01", amount: 20000 }] }));
+    expect(rows.length).toBeLessThan(12);
+    expect(rows[3].pay).toBe(20000);
+    expect(rows[rows.length - 1].balance).toBe(0);
+  });
+
+  it("carries on from the lender's balance on a date", () => {
+    const rows = loanSchedule(loan({}, { balance: 10000, balance_on: "2026-03-20" }));
+    expect(rows[2].pay).toBe(8885); // March, before the figure applies
+    expect(rows[3]).toEqual({ date: "2026-04-05", pay: 8885, interest: 100, balance: 1215 });
+    expect(rows).toHaveLength(5);
+    expect(rows[4].pay).toBe(1227.15);
+  });
+
+  it("says where it stands on a day", () => {
+    const now = loanNow(loan(), 0, "2026-03-10");
+    expect(now.balance).toBe(loanSchedule(loan())[2].balance);
+    expect(now.left).toBe(9);
+    expect(now.ends).toBe("2026-12-05");
+    expect(now.endless).toBe(false);
+    expect(loanNow(loan(), 0, "2025-12-01").balance).toBe(100000);
+    expect(loanNow(loan({}, { balance: 50000, balance_on: "2026-03-08" }), 0, "2026-03-10").balance).toBe(50000);
+    expect(loanNow(loan({ amount: 500 }), 0, "2026-03-10").endless).toBe(true);
+  });
+
+  it("is a line while something is owed, and gone after", () => {
+    const l = loan();
+    expect(monthLines([l], [], [], "2026-12")[0].rule).toBe(loanSchedule(l)[11].pay);
+    expect(monthLines([l], [], [], "2027-01")).toEqual([]);
+    expect(monthLines([l], [], [], "2025-12")).toEqual([]);
+    expect(monthLines([l], [], [], "2026-06")[0]).toMatchObject({ rule: 8885, dates: ["2026-06-05"] });
   });
 });

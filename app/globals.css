@@ -1055,3 +1055,8 @@ button.kit-token.is-act:hover { background: color-mix(in srgb, var(--a-bg) 34%, 
   * { transition: none !important; }
   .pop-menu, .select-pop { animation: none; }
 }
+/* A loan's standing in the item form: three figures in a row. */
+.loan-facts { display: flex; gap: 16px; margin: 0; padding: 12px 14px; border-radius: 10px; background: var(--surface-2); }
+.loan-facts div { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
+.loan-facts dt { font-size: 12px; color: var(--muted); }
+.loan-facts dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; }

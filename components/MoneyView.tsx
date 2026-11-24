@@ -6,7 +6,7 @@ import type { MoneyCtx } from "./useMoney";
 import Panel from "./Panel";
 import MoneySetup, { TONES } from "./MoneySetup";
 import { MoneyItemForm, MoneyLineForm } from "./MoneyItemForm";
-import { amountOn, bankPosition, byPerson, byType, expected, forecast, FREQ_LABELS, inr, monthLabel, monthLines, shiftMonth, totals, waitingOn, type Line, type MoneyKind, type Proposal } from "@/lib/money";
+import { amountOn, loanNow, bankPosition, byPerson, byType, expected, forecast, FREQ_LABELS, inr, monthLabel, monthLines, shiftMonth, totals, waitingOn, type Line, type MoneyKind, type Proposal } from "@/lib/money";
 import { canAdd, isCurrent, type Circle } from "@/lib/circles";
 import { todayISO } from "@/lib/time";
 
@@ -178,7 +178,7 @@ function Ring({ parts, children }: { parts: Part[]; children: React.ReactNode })
 }
 
 /** What the budget in view says, drawn: who the month's money goes on, where it goes, what each bank is left with, and the year ahead. */
-function Insights({ lines, view, ym }: { lines: Line[]; view: MoneyCtx; ym: string }) {
+function Insights({ lines, view, ym, today }: { lines: Line[]; view: MoneyCtx; ym: string; today: string }) {
   const [pick, setPick] = useState(0); // the month of the year ahead whose figures are spelled out
   const people = byPerson(lines);
   const types = byType(lines);
@@ -192,6 +192,7 @@ function Insights({ lines, view, ym }: { lines: Line[]; view: MoneyCtx; ym: stri
   const year = ahead.reduce((s, m) => s + m.left, 0);
   const shown = ahead[Math.min(pick, ahead.length - 1)];
   const typeMax = Math.max(...types.map((t) => Math.max(t.budget, t.actual + t.due)), 1);
+  const loans = view.items.filter((i) => i.loan).map((i, n) => ({ i, tone: TONES[n % TONES.length], now: loanNow(i, Number(view.increases.find((x) => x.id === i.increase_id)?.percent ?? 0), today) }));
   if (!view.items.length) return <p className="empty card">Nothing to show yet. Add an income or an expense first.</p>;
 
   return (
@@ -270,6 +271,29 @@ function Insights({ lines, view, ym }: { lines: Line[]; view: MoneyCtx; ym: stri
         </section>
       )}
 
+      {loans.length > 0 && (
+        <section className="ins-wide">
+          <h2>Loans</h2>
+          <ul className="ins-banks">
+            {loans.map(({ i, tone, now }) => {
+              const taken = Number(i.loan!.principal);
+              const repaid = Math.max(0, Math.min(1, taken > 0 ? 1 - now.balance / taken : 1));
+              return (
+                <li key={i.id} className="card">
+                  <span className="ins-bank-top"><span className={`kit-mono act-${tone}`}>{i.name.trim()[0]?.toUpperCase()}</span><span className="ins-name">{i.name}</span></span>
+                  <strong className="ins-bank-left">{inr(now.balance)}</strong>
+                  {/* The track is the amount taken; the solid part is what has been paid back. */}
+                  <span className={`ins-track act-${tone}`} role="img" aria-label={`${inr(now.balance)} still owed of ${inr(taken)} taken`}>
+                    <span className="ins-paid" style={{ width: `${repaid * 100}%` }} />
+                  </span>
+                  <span className="ins-sub">{now.balance <= 0 ? "paid off" : now.endless ? "owed, and the EMI does not cover the interest" : `owed of ${inr(taken)}, ends ${now.ends ? DateTime.fromISO(now.ends).toFormat("LLL yyyy") : ""}`}</span>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
+
       <section className="card ins-card ins-wide">
         <div className="ins-row"><h2>The year ahead</h2><strong className={year < 0 ? "is-short" : "is-left"}>{year < 0 ? "− " : "+ "}{inr(Math.abs(year))}</strong></div>
         {/* A column a month, from a middle line: up is what the month leaves, down is what it falls short by. */}
@@ -337,6 +361,7 @@ function Items({ view, today, canEdit, onOpen, onNew }: { view: MoneyCtx; today:
             const later = i.start_date > today;
             const amount = amountOn(i, later ? i.start_date : ended ? i.end_date! : today, (i.freq !== "once" && i.increase_id && pct.get(i.increase_id)) || 0);
             const changes = (i.amount_steps ?? []).length;
+            const owes = i.loan ? loanNow(i, (i.increase_id && pct.get(i.increase_id)) || 0, today).balance : null;
             return (
               <li key={i.id}>
                 <button className={`items-row ${ended ? "is-ended" : ""}`} onClick={() => onOpen(i.id)}>
@@ -353,7 +378,7 @@ function Items({ view, today, canEdit, onOpen, onNew }: { view: MoneyCtx; today:
                   </span>
                   <span className="money-amt">
                     <strong>{inr(amount)}</strong>
-                    <span>{ended ? "ended" : later ? `from ${DateTime.fromISO(i.start_date).toFormat("d LLL yyyy")}` : FREQ_LABELS[i.freq].toLowerCase()}{changes > 0 && !ended ? `, ${changes} ${changes === 1 ? "change" : "changes"}` : ""}</span>
+                    <span>{owes !== null ? (owes > 0 ? `loan, ${inr(owes)} owed` : "loan, paid off") : ended ? "ended" : later ? `from ${DateTime.fromISO(i.start_date).toFormat("d LLL yyyy")}` : FREQ_LABELS[i.freq].toLowerCase()}{changes > 0 && !ended ? `, ${changes} ${changes === 1 ? "change" : "changes"}` : ""}</span>
                   </span>
                 </button>
               </li>
@@ -688,7 +713,7 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
             {tab === "insights" && (
               <>
                 {monthBar}
-                <Insights lines={lines} view={view} ym={ym} />
+                <Insights lines={lines} view={view} ym={ym} today={todayISO(ctx.tz)} />
               </>
             )}
 
