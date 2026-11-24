@@ -437,6 +437,89 @@ function Year({ view, from, nowYm, canEdit, groupBy, onLine, onItem, onAdd }: {
   );
 }
 
+/**
+ * The month for each bank, drawn. On top, a jar a bank: how full it is against the fullest, with the unpaid bills
+ * hatched off the top. Pressing a jar shows that bank alone. Each bank then has a small bridge from what it holds
+ * now, up by what is still to come, down by the bills, to what is left; its bills are a row of dots that opens.
+ */
+function Banks({ view, lines, canEdit, who, onToggle, onOpen, onSetup }: { view: MoneyCtx; lines: Line[]; canEdit: boolean; who: (b: MoneyCtx["banks"][number]) => string; onToggle: (l: Line) => void; onOpen: (l: Line) => void; onSetup: () => void }) {
+  const [pick, setPick] = useState<string | null>(null);
+  const [open, setOpen] = useState<string[]>([]); // banks whose bills are listed
+  const banks = view.banks.filter((b) => !b.archived_at).map((b) => {
+    const pos = bankPosition(b, lines);
+    const balance = Number(b.balance);
+    return { b, pos, balance, tone: TONES[view.banks.indexOf(b) % TONES.length], short: pos.after < 0, holds: Math.max(balance, 0) + pos.incomeDue, out: lines.filter((l) => l.item.bank_id === b.id && l.item.kind === "expense") };
+  });
+  const fullest = Math.max(...banks.map((x) => x.holds), 1);
+  const left = banks.reduce((n, x) => n + x.pos.after, 0);
+  const stray = lines.filter((l) => !l.item.bank_id);
+  if (!banks.length && !stray.length) return <p className="empty card">No banks yet. {canEdit && <button className="link" onClick={onSetup}>Add one in Setup</button>}</p>;
+  const shown = banks.filter((x) => !pick || x.b.id === pick);
+
+  return (
+    <>
+      {banks.length > 0 && (
+        <section className={`card jars-card ${left < 0 ? "is-short" : ""}`}>
+          <p className="sum-left"><strong>{left < 0 ? "− " : ""}{inr(Math.abs(left))}</strong> {left < 0 ? "short" : "left"}</p>
+          <div className="jars" role="group" aria-label="Banks">
+            {banks.map(({ b, pos, tone, short, holds }) => (
+              <button key={b.id} className={`jar-pick act-${tone} ${pick === b.id ? "is-picked" : ""} ${pick && pick !== b.id ? "is-dim" : ""} ${short ? "is-short" : ""}`} aria-pressed={pick === b.id} aria-label={`${b.name}: ${short ? `short by ${inr(-pos.after)}` : `${inr(pos.after)} left`} after ${inr(pos.expenseDue)} of bills`} onClick={() => setPick(pick === b.id ? null : b.id)}>
+                {/* The jar's contents are what the bank holds and expects; the hatched top is what the bills take. */}
+                <span className="jar" aria-hidden>
+                  <span className="jar-out" style={{ height: `${(Math.min(pos.expenseDue, holds) / fullest) * 100}%` }} />
+                  <span className="jar-keep" style={{ height: `${(Math.max(pos.after, 0) / fullest) * 100}%` }} />
+                </span>
+                <span className="jar-name" aria-hidden>{b.name}</span>
+                <strong aria-hidden>{short ? "− " : ""}{inr(Math.abs(pos.after))}</strong>
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+      {shown.map(({ b, pos, balance, tone, short, out }) => {
+        const top = Math.max(balance + pos.incomeDue, pos.expenseDue, 1);
+        const h = (n: number) => `${Math.max(0, (n / top) * 100)}%`;
+        const listed = open.includes(b.id);
+        const paid = out.filter((l) => l.paid).length;
+        const note = `${b.balance_at ? `Balance as of ${DateTime.fromISO(b.balance_at).toFormat("d LLL")}` : "No balance yet"}${who(b) ? `, by ${who(b)}` : ""}`;
+        return (
+          <section key={b.id} className={`card bank act-${tone} ${short ? "is-short" : ""}`}>
+            <div className="bank-head">
+              <span className={`kit-mono act-${tone}`} aria-hidden>{b.name.trim()[0]?.toUpperCase()}</span>
+              <h2>{b.name}</h2>
+              <span className="bank-date" title={note} aria-label={note}>{b.balance_at ? DateTime.fromISO(b.balance_at).toFormat("d LLL") : "—"}</span>
+            </div>
+            {/* A bridge across the month: now, up by what is to come, down by the bills, and what that leaves. */}
+            <ol className="bridge" aria-label={`${inr(balance)} now, ${inr(pos.incomeDue)} still to come, ${inr(pos.expenseDue)} still to pay, ${short ? `short by ${inr(-pos.after)}` : `${inr(pos.after)} left`}`}>
+              <li className="is-now"><span className="bridge-col"><i style={{ height: h(balance) }} /></span><span className="bridge-mark" aria-hidden>●</span><strong>{inr(balance)}</strong></li>
+              {pos.incomeDue > 0 && <li className="is-in"><span className="bridge-col"><i style={{ height: h(pos.incomeDue), bottom: h(Math.max(balance, 0)) }} /></span><span className="bridge-mark" aria-hidden>↓</span><strong>{inr(pos.incomeDue)}</strong></li>}
+              {pos.expenseDue > 0 && <li className="is-out"><span className="bridge-col"><i style={{ height: h(Math.min(pos.expenseDue, top)), bottom: h(Math.max(pos.after, 0)) }} /></span><span className="bridge-mark" aria-hidden>↑</span><strong>{inr(pos.expenseDue)}</strong></li>}
+              <li className="is-left"><span className="bridge-col"><i style={{ height: short ? "3px" : h(pos.after) }} /></span><span className="bridge-mark" aria-hidden>=</span><strong>{short ? "− " : ""}{inr(Math.abs(pos.after))}</strong></li>
+            </ol>
+            {out.length > 0 && (
+              <>
+                {/* A dot a bill, filled once it is paid. Pressing the row lists them. */}
+                <button className="bank-bills" aria-expanded={listed} aria-label={`${paid} of ${out.length} bills paid. ${listed ? "Hide" : "Show"} them`} onClick={() => setOpen(listed ? open.filter((x) => x !== b.id) : [...open, b.id])}>
+                  <span className="bank-dots" aria-hidden>{out.map((l) => <i key={l.item.id} className={l.paid ? "is-paid" : l.skipped ? "is-skipped" : ""} />)}</span>
+                  <span className="bank-count" aria-hidden>{paid}/{out.length}</span>
+                  <svg className="money-group-fold" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M6 9.500l6 6 6-6" /></svg>
+                </button>
+                {listed && <Lines flat lines={out} onToggle={onToggle} onOpen={onOpen} locked={!canEdit} empty="" />}
+              </>
+            )}
+          </section>
+        );
+      })}
+      {!pick && stray.length > 0 && (
+        <section className="card bank">
+          <div className="bank-head"><span className="kit-mono is-none" aria-hidden>?</span><h2>No bank chosen</h2></div>
+          <Lines flat lines={stray} onToggle={onToggle} onOpen={onOpen} locked={!canEdit} empty="" />
+        </section>
+      )}
+    </>
+  );
+}
+
 type ItemFilter = "all" | "income" | "expense" | "fix";
 const FREQ_MARK: Record<MoneyFreq, string> = { once: "1", daily: "D", weekly: "W", monthly: "M", yearly: "Y" };
 /** What an amount each time comes to in an average month. A one-time item has no monthly weight. */
@@ -893,48 +976,7 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
             {tab === "banks" && (
               <>
                 {monthBar}
-                {view.banks.every((b) => b.archived_at) && <p className="empty card">No banks yet. {canEdit && <button className="link" onClick={() => setTab("setup")}>Add one in Setup</button>}</p>}
-                {view.banks.filter((b) => !b.archived_at).map((b) => {
-                  const pos = bankPosition(b, lines);
-                  const out = lines.filter((l) => l.item.bank_id === b.id && l.item.kind === "expense");
-                  const balance = Number(b.balance);
-                  const full = Math.max(balance + pos.incomeDue, 1); // everything the account holds or expects this month
-                  const short = pos.after < 0;
-                  return (
-                    <section key={b.id} className={`card bank ${short ? "is-short" : ""}`}>
-                      <div className="bank-head">
-                        <span className={`kit-mono act-${TONES[view.banks.indexOf(b) % TONES.length]}`} aria-hidden>{b.name.trim()[0]?.toUpperCase()}</span>
-                        <h2>{b.name}</h2>
-                        <span className="bank-date">{b.balance_at ? DateTime.fromISO(b.balance_at).toFormat("d LLL") : "no balance yet"}{scope ? `, ${nameOf(scope, b.user_id ?? "", ctx.userId).replace("You", "you")}` : ""}</span>
-                      </div>
-                      <p className="bank-left"><strong>{short ? "− " : ""}{inr(Math.abs(pos.after))}</strong> {short ? "short" : "left"}</p>
-                      {/* One bar for the month: what is in the account, what is still to arrive, and the unpaid bills struck off the end. */}
-                      <div className="bank-bar" role="img" aria-label={`${inr(balance)} in the account, ${inr(pos.incomeDue)} still to come, ${inr(pos.expenseDue)} still to pay`}>
-                        <span className="is-now" style={{ width: `${(Math.max(balance, 0) / full) * 100}%` }} />
-                        <span className="is-coming" style={{ width: `${(pos.incomeDue / full) * 100}%` }} />
-                        <span className="is-bills" style={{ width: `${Math.min(100, (pos.expenseDue / full) * 100)}%` }} />
-                      </div>
-                      <ul className="bank-key">
-                        <li><i className="is-now" />{inr(balance)} now</li>
-                        {pos.incomeDue > 0 && <li><i className="is-coming" />{inr(pos.incomeDue)} coming</li>}
-                        {pos.expenseDue > 0 && <li><i className="is-bills" />{inr(pos.expenseDue)} to pay</li>}
-                      </ul>
-                      {out.length > 0 && (
-                        <>
-                          {/* A dot a bill, filled once it is paid. */}
-                          <p className="bank-dots" role="img" aria-label={`${out.filter((l) => l.paid).length} of ${out.length} bills paid`}>{out.map((l) => <i key={l.item.id} className={l.paid ? "is-paid" : l.skipped ? "is-skipped" : ""} />)}</p>
-                          <Lines flat lines={out} onToggle={togglePaid} onOpen={openLine} locked={!canEdit} empty="" />
-                        </>
-                      )}
-                    </section>
-                  );
-                })}
-                {lines.some((l) => !l.item.bank_id) && (
-                  <section className="card bank">
-                    <div className="bank-head"><span className="kit-mono is-none" aria-hidden>?</span><h2>No bank chosen</h2></div>
-                    <Lines flat lines={lines.filter((l) => !l.item.bank_id)} onToggle={togglePaid} onOpen={openLine} locked={!canEdit} empty="" />
-                  </section>
-                )}
+                <Banks view={view} lines={lines} canEdit={canEdit} who={(b) => (scope ? nameOf(scope, b.user_id ?? "", ctx.userId).replace("You", "you") : "")} onToggle={togglePaid} onOpen={openLine} onSetup={() => setTab("setup")} />
               </>
             )}
 
