@@ -639,11 +639,37 @@ textarea { resize: vertical; }
 .items-list li + li { border-top: 1px solid var(--line); }
 .items-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 16px; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .items-row:hover { background: var(--surface-2); }
-.items-row.is-ended { opacity: .55; }
-.items-what { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.items-row.is-ended { opacity: .5; }
+.items-row > .kit-mono { width: 30px; height: 30px; border-radius: 9px; font-size: 13px; }
+.items-what { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .items-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.items-what .line-meta { flex-wrap: wrap; gap: 2px 10px; }
-.items-what .line-meta > span { display: inline-flex; align-items: center; gap: 5px; }
+/* An item's weight in the month. */
+.items-bar { display: block; height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--a-bg, var(--line-2)) 22%, transparent); }
+.items-bar span { display: block; height: 100%; border-radius: 3px; background: var(--a-bg, var(--muted)); }
+.items-bar.is-none { background: var(--surface-2); }
+/* The small marks under the amount: how often, which bank, and what sort of item. */
+.items-marks { display: flex; align-items: center; justify-content: flex-end; gap: 5px; margin-top: 4px; }
+.money-amt .items-mark { display: grid; place-items: center; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 5px; background: var(--surface-2); color: var(--ink-2); font-size: 9px; font-weight: 700; }
+.money-amt .items-mark.is-sum { background: var(--accent-soft); color: var(--accent-text); font-size: 11px; font-style: italic; }
+.money-amt .items-mark.is-off { text-decoration: line-through; }
+.money-amt .items-from { font-size: 11px; }
+.items-steps { color: var(--ink-2); }
+.items-ring circle { fill: none; stroke: var(--line-2); stroke-width: 3; }
+.items-ring circle + circle { stroke: var(--ok); stroke-linecap: round; transform: rotate(-90deg); transform-origin: center; }
+.items-marks .kit-mono.items-fix { border-color: var(--warn); }
+/* A part, under the item that uses it. */
+.items-row.is-part { padding-top: 7px; padding-bottom: 7px; }
+.items-row.is-part > .kit-mono { width: 22px; height: 22px; border-radius: 7px; font-size: 11px; }
+.items-row.is-part .items-name { font-weight: 500; font-size: 13px; color: var(--ink-2); }
+.items-row.is-part .money-amt strong { font-weight: 500; font-size: 13px; color: var(--ink-2); }
+.items-kind { display: flex; flex-direction: column; gap: 8px; }
+.items-kind h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 16px; }
+/* An average month at the top: a strip for what comes in and one for what goes out, cut by type. */
+.items-flow { display: flex; flex-direction: column; gap: 10px; font-variant-numeric: tabular-nums; }
+.flow-track { display: block; height: 14px; }
+.flow-track > span { display: flex; gap: 2px; height: 100%; min-width: 4px; }
+.flow-track i { min-width: 3px; border-radius: 4px; background: var(--a-bg, var(--muted)); }
+.flow-track i.is-none { background: var(--line-2); }
 .items-fix { color: var(--warn); font-weight: 600; }
 /* An item's amount over time: a row for each stretch, the figure first, then when it holds. A dot marks the
    one in force today. */
@@ -1074,3 +1100,5 @@ button.kit-token.is-act:hover { background: color-mix(in srgb, var(--a-bg) 34%, 
 .money-lines .line-part { padding: 4px 0 4px 44px; border-bottom-style: dashed; }
 .money-lines .line-part .task-title { font-size: 13px; color: var(--ink-2); }
 .money-lines .line-part .money-amt { font-size: 13px; color: var(--ink-2); }
+.items-row > .kit-mono.items-fix { border-color: var(--warn); color: var(--warn); }
+.items-row .money-amt { min-width: 84px; } /* so the bars end in one line */
