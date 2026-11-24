@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { PlannerCtx } from "./usePlanner";
 import type { MoneyCtx } from "./useMoney";
 import Select from "./Select";
@@ -9,13 +9,15 @@ import { todayISO } from "@/lib/time";
 import { DateTime } from "luxon";
 
 const NONE = { value: "", label: "None" };
+// The picker's last choice: make a new bank or type without leaving the form.
+const NEW = "__new";
 
 /**
  * Add or change an income or expense: the rule for every month it falls in.
  * `money` holds the budget in view only. In a circle (`scope`) saving sends a request the other members approve.
  * `again` is a rejected request being changed and sent once more: the form starts from what was asked.
  */
-export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kind: startKind, onDone }: { ctx: PlannerCtx; money: MoneyCtx; scope: Circle | null; canEdit: boolean; existing?: MoneyItem; again?: Proposal; kind?: MoneyKind; onDone: () => void }) {
+export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kind: startKind, onKind, onDone }: { ctx: PlannerCtx; money: MoneyCtx; scope: Circle | null; canEdit: boolean; existing?: MoneyItem; again?: Proposal; kind?: MoneyKind; onKind?: (kind: MoneyKind) => void; onDone: () => void }) {
   const { supabase, toast } = ctx;
   const from: Partial<MoneyItem> | undefined = again?.payload ?? existing;
   // Someone else has to agree: another current owner or member. In a circle of one, a request is carried out at once.
@@ -36,10 +38,46 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
   const [saving, setSaving] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // A bank or a type being made on the spot, from its picker.
+  const [adding, setAdding] = useState<{ what: "bank" | "type"; name: string; balance: string } | null>(null);
+  // The panel's title follows the kind chosen here.
+  useEffect(() => onKind?.(kind), [kind, onKind]);
 
-  // Archived choices are not offered, except the one this item already uses.
-  const offer = <T extends { id: string; name: string; archived_at: string | null }>(rows: T[], keep: string) =>
-    [NONE, ...rows.filter((r) => !r.archived_at || r.id === keep).map((r) => ({ value: r.id, label: r.name }))];
+  // Archived choices are not offered, except the one this item already uses. A bank and a type are required, so
+  // there is no "None"; the last choice makes a new one.
+  const offer = <T extends { id: string; name: string; archived_at: string | null }>(rows: T[], keep: string, what: string) =>
+    [...rows.filter((r) => !r.archived_at || r.id === keep).map((r) => ({ value: r.id, label: r.name })), ...(canEdit ? [{ value: NEW, label: `＋ New ${what}` }] : [])];
+
+  async function addNew() {
+    if (!adding || saving) return;
+    const label = adding.name.trim();
+    if (!label) return setError(`Give the ${adding.what} a name.`);
+    const balance = adding.balance.trim() ? parseAmount(adding.balance) : 0;
+    if (balance === null) return setError("Enter the balance as a number.");
+    setSaving(true);
+    const own = scope ? { circle_id: scope.id } : {};
+    const { data, error } = adding.what === "bank"
+      ? await supabase.from("money_banks").insert({ name: label, balance, balance_at: todayISO(ctx.tz), ...own }).select("id").single()
+      : await supabase.from("money_types").insert({ name: label, kind, ...own }).select("id").single();
+    setSaving(false);
+    if (error) return setError(`Couldn’t add the ${adding.what}: ${error.message}`);
+    await money.reload();
+    (adding.what === "bank" ? setBank : setType)((data as { id: string }).id);
+    setAdding(null);
+    setError(null);
+    toast("ok", `${label} added`);
+  }
+  // The small form under a picker. Enter adds, and must not send the whole item form.
+  const adder = (what: "bank" | "type") => adding?.what === what && (
+    <div className="subform" onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addNew(); } }}>
+      <input value={adding.name} onChange={(e) => setAdding({ ...adding, name: e.target.value })} placeholder={what === "bank" ? "Bank name" : `${expense ? "Expense" : "Income"} type name`} aria-label={`New ${what} name`} autoFocus />
+      {what === "bank" && <input value={adding.balance} onChange={(e) => setAdding({ ...adding, balance: e.target.value })} inputMode="decimal" placeholder="Current balance (optional)" aria-label="Current balance" />}
+      <div className="row">
+        <button type="button" className="btn btn-sm" disabled={saving} onClick={addNew}>Add {what}</button>
+        <button type="button" className="btn btn-ghost btn-sm" onClick={() => setAdding(null)}>Cancel</button>
+      </div>
+    </div>
+  );
   const family = money.people.filter((p) => !p.archived_at || people.includes(p.id));
   const expense = kind === "expense";
   const value = parseAmount(amount);
@@ -58,6 +96,8 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
     if (!name.trim()) return setError("Give it a name.");
     if (value === null) return setError("Enter the amount as a number, for example 1499.");
     if (!start) return setError("Choose a date.");
+    if (!bank) return setError(`Choose the bank it ${expense ? "is paid from" : "comes into"}.`);
+    if (!type) return setError(`Choose ${expense ? "an expense" : "an income"} type.`);
     if (freq !== "once" && end && end < start) return setError("The last date is before the first.");
     // A one-time item has one amount. Otherwise each change needs a date after the first date, its own day, and a figure.
     const changes = freq === "once" ? [] : steps.map((x) => ({ from: x.from, amount: parseAmount(x.amount) }));
@@ -106,7 +146,7 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
       <fieldset disabled={!canEdit} className="form" style={{ border: 0, padding: 0, margin: 0 }}>
       <div className="segmented" role="group" aria-label="Kind">
         {(["expense", "income"] as const).map((k) => (
-          <button type="button" key={k} className={kind === k ? "is-active" : ""} aria-pressed={kind === k} onClick={() => { setKind(k); setType(""); }}>{k === "expense" ? "Expense" : "Income"}</button>
+          <button type="button" key={k} className={kind === k ? "is-active" : ""} aria-pressed={kind === k} onClick={() => { setKind(k); setType(""); setAdding(null); }}>{k === "expense" ? "Expense item" : "Income item"}</button>
         ))}
       </div>
       <label className="field"><span>Name</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder={expense ? "Wifi bill" : "Salary"} autoFocus={!existing} /></label>
@@ -139,8 +179,16 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
         )}
         <span className="hint">{steps.length && freq !== "once" ? "Each amount holds until the next one starts." : `What you plan for. What you really ${expense ? "pay" : "receive"} is recorded month by month.`}</span>
       </fieldset>
-      <label className="field"><span>Bank</span><Select id="money-bank" value={bank} options={offer(money.banks, bank)} onChange={setBank} /></label>
-      <label className="field"><span>{expense ? "Expense type" : "Income type"}</span><Select id="money-type" value={type} options={offer(money.types.filter((t) => t.kind === kind), type)} onChange={setType} /></label>
+      <div className="field">
+        <span>Bank</span>
+        <Select id="money-bank" value={bank} options={offer(money.banks, bank, "bank")} onChange={(v) => (v === NEW ? setAdding({ what: "bank", name: "", balance: "" }) : setBank(v))} />
+        {adder("bank")}
+      </div>
+      <div className="field">
+        <span>{expense ? "Expense type" : "Income type"}</span>
+        <Select id="money-type" value={type} options={offer(money.types.filter((t) => t.kind === kind), type, "type")} onChange={(v) => (v === NEW ? setAdding({ what: "type", name: "", balance: "" }) : setType(v))} />
+        {adder("type")}
+      </div>
       {freq !== "once" && (
         <label className="field">
           <span>Yearly increase</span>

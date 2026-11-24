@@ -631,6 +631,20 @@ textarea { resize: vertical; }
 .chips-xs { gap: 4px; margin-top: 6px; }
 .chips-xs .chip { min-height: 26px; padding: 0 9px; gap: 5px; font-size: 12px; }
 .chips-xs .swatch { width: 8px; height: 8px; }
+/* Items: every income and expense, whatever the month. */
+.items-filters { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.items-filters > input { flex: 1 1 180px; width: auto; }
+.items-count { font-size: 11px; opacity: .7; font-variant-numeric: tabular-nums; }
+.items-list { padding: 0 !important; overflow: hidden; }
+.items-list li + li { border-top: 1px solid var(--line); }
+.items-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 16px; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.items-row:hover { background: var(--surface-2); }
+.items-row.is-ended { opacity: .55; }
+.items-what { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.items-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.items-what .line-meta { flex-wrap: wrap; gap: 2px 10px; }
+.items-what .line-meta > span { display: inline-flex; align-items: center; gap: 5px; }
+.items-fix { color: var(--warn); font-weight: 600; }
 /* An item's amount over time: a row for each stretch, the figure first, then when it holds. A dot marks the
    one in force today. */
 .amt-steps { display: flex; flex-direction: column; gap: 8px; }
