@@ -382,6 +382,26 @@ export function forecast(items: MoneyItem[], entries: MoneyEntry[], increases: I
   });
 }
 
+/** An item across a run of months: its line in each month it falls due (null where it does not), what each comes to, and the sum. */
+export interface YearRow { item: MoneyItem; cells: (Line | null)[]; values: number[]; total: number }
+/**
+ * A run of months as a grid, a row for every item due in any of them. A cell counts as its expected amount,
+ * and as nothing when skipped. Items that come most often are first, so a row's pattern shows how often it comes.
+ */
+export function yearRows(items: MoneyItem[], entries: MoneyEntry[], increases: Increase[], fromYm: string, months = 12): { months: string[]; rows: YearRow[] } {
+  const yms = Array.from({ length: months }, (_, n) => shiftMonth(fromYm, n));
+  const cols = yms.map((ym) => new Map(monthLines(items, entries, increases, ym).map((l) => [l.item.id, l])));
+  const rows = items
+    .map((item): YearRow => {
+      const cells = cols.map((c) => c.get(item.id) ?? null);
+      const values = cells.map((l) => (l && !l.skipped ? expected(l) : 0));
+      return { item, cells, values, total: round2(values.reduce((s, v) => s + v, 0)) };
+    })
+    .filter((r) => r.cells.some(Boolean))
+    .sort((a, b) => b.cells.filter(Boolean).length - a.cells.filter(Boolean).length || a.item.name.localeCompare(b.item.name));
+  return { months: yms, rows };
+}
+
 const whole = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
 const paise = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", minimumFractionDigits: 2 });
 /** Rupees, grouped the Indian way: ₹1,25,000. Paise show only when there are some. */

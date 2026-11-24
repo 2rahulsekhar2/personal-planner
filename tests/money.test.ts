@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evalFormula, formulaLoops, withParts, type FormulaToken, loanEmi, loanNow, loanSchedule, amountIn, amountOn, amountPeriods, bankPosition, byPerson, byType, forecast, linesDueOn, waitingOn, datesInMonth, monthLines, parseAmount, shiftMonth, totals, type MoneyEntry, type MoneyItem } from "@/lib/money";
+import { evalFormula, formulaLoops, withParts, type FormulaToken, loanEmi, loanNow, loanSchedule, amountIn, amountOn, amountPeriods, bankPosition, byPerson, byType, forecast, linesDueOn, waitingOn, datesInMonth, monthLines, parseAmount, shiftMonth, totals, yearRows, type MoneyEntry, type MoneyItem } from "@/lib/money";
 
 const item = (over: Partial<MoneyItem>): MoneyItem => ({
   id: "i1", kind: "expense", name: "Wifi bill", amount: 1000, freq: "monthly", start_date: "2026-01-15", end_date: null,
@@ -239,6 +239,26 @@ describe("a loan", () => {
     expect(monthLines([l], [], [], "2027-01")).toEqual([]);
     expect(monthLines([l], [], [], "2025-12")).toEqual([]);
     expect(monthLines([l], [], [], "2026-06")[0]).toMatchObject({ rule: 8885, dates: ["2026-06-05"] });
+  });
+});
+
+describe("the year as a grid", () => {
+  it("gives a row to each item due in the run, a cell a month, and counts actuals and skips", () => {
+    const rent = item({ id: "rent", name: "Rent", start_date: "2026-01-05" });
+    const car = item({ id: "car", name: "Car insurance", freq: "yearly", amount: 18000, start_date: "2025-03-10" });
+    const gone = item({ id: "gone", name: "Old gym", end_date: "2026-06-30" });
+    const entries: MoneyEntry[] = [
+      { item_id: "rent", month: "2026-12-01", budget: null, actual: 1200, paid_at: "2026-12-05T00:00:00Z", skipped: false },
+      { item_id: "rent", month: "2027-01-01", budget: null, actual: null, paid_at: null, skipped: true },
+    ];
+    const { months, rows } = yearRows([car, gone, rent], entries, [], "2026-11");
+    expect(months[0]).toBe("2026-11");
+    expect(months[11]).toBe("2027-10");
+    expect(rows.map((r) => r.item.id)).toEqual(["rent", "car"]); // most often first; nothing due is left out
+    expect(rows[0].values.slice(0, 3)).toEqual([1000, 1200, 0]);
+    expect(rows[0].cells[2]?.skipped).toBe(true);
+    expect(rows[0].total).toBe(11200);
+    expect(rows[1].cells.map((c) => !!c)).toEqual([false, false, false, false, true, false, false, false, false, false, false, false]);
   });
 });
 
