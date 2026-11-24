@@ -933,20 +933,44 @@ button.yr-month:hover { background: var(--surface-2); color: var(--ink); }
 .bank-head h2 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bank-date { font-size: 12px; color: var(--muted); white-space: nowrap; }
 .kit-mono.is-none { background: none; border: 1.5px dashed var(--line-2); color: var(--muted); }
-.bank-left { margin: 2px 0 0; color: var(--ink-2); }
-.bank-left strong { font-size: 30px; letter-spacing: -.02em; color: var(--ink); margin-right: 2px; }
-.bank.is-short .bank-left strong, .bank.is-short .bank-left { color: var(--danger); }
-.bank-bar { position: relative; display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: var(--surface-2); }
-.bank-bar .is-now, .bank-key .is-now { background: var(--accent); }
-.bank-bar .is-coming, .bank-key .is-coming { background: var(--ok); }
-/* The bills are cut out of the bar's right end: stripes of the card's own colour over whatever lies beneath. */
-.bank-bar .is-bills { position: absolute; top: 0; bottom: 0; right: 0; background: repeating-linear-gradient(-45deg, var(--surface) 0 3px, transparent 3px 6px); }
-.bank.is-short .bank-bar .is-bills { background: var(--danger); }
-.bank-key { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: 13px; color: var(--ink-2); }
-.bank-key li { display: inline-flex; align-items: center; gap: 6px; }
-.bank-key i { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; }
-.bank-key .is-bills { background: repeating-linear-gradient(-45deg, var(--ink-2) 0 2px, transparent 2px 4px); }
-.bank.is-short .bank-key .is-bills { background: var(--danger); }
+/* The jars on top: a bank each, as full as it is against the fullest, the unpaid bills hatched off the top. */
+.jars-card { display: flex; flex-direction: column; gap: 6px; font-variant-numeric: tabular-nums; }
+.jars-card.is-short .sum-left, .jars-card.is-short .sum-left strong { color: var(--danger); }
+.jars { display: flex; gap: 6px; overflow-x: auto; margin: 0 -6px; padding: 4px 6px 2px; }
+.jar-pick { display: flex; flex-direction: column; align-items: center; gap: 2px; flex: 1 0 84px; max-width: 132px; padding: 8px 4px; border: 0; border-radius: 14px; background: none; color: inherit; font: inherit; cursor: pointer; transition: opacity .15s ease; }
+.jar-pick:hover, .jar-pick.is-picked { background: var(--surface-2); }
+.jar-pick.is-dim { opacity: .4; }
+.jar { position: relative; display: flex; flex-direction: column; justify-content: flex-end; width: 46px; height: 76px; margin-bottom: 6px; border: 2px solid color-mix(in srgb, var(--a-bg) 70%, var(--line-2)); border-top-width: 0; border-radius: 4px 4px 14px 14px; overflow: hidden; background: color-mix(in srgb, var(--a-bg) 10%, transparent); }
+.jar::before { content: ""; position: absolute; top: 0; left: -2px; right: -2px; height: 2px; background: color-mix(in srgb, var(--a-bg) 70%, var(--line-2)); }
+.jar-keep { background: var(--a-bg); transition: height .25s ease; }
+.jar-out { background: repeating-linear-gradient(-45deg, var(--a-bg) 0 3px, transparent 3px 6px); opacity: .7; transition: height .25s ease; }
+.jar-pick.is-short .jar { border-color: var(--danger); background: var(--danger-soft); }
+.jar-pick.is-short .jar::before { background: var(--danger); }
+.jar-pick.is-short .jar-out { background: repeating-linear-gradient(-45deg, var(--danger) 0 3px, transparent 3px 6px); }
+.jar-pick.is-short strong { color: var(--danger); }
+.jar-name { max-width: 100%; font-size: 12px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.jar-pick strong { font-size: 13px; }
+/* A bank's month as a bridge: columns that step from now, up by what comes, down by the bills, to what is left. */
+.bridge { list-style: none; margin: 4px 0 0; padding: 0; display: flex; gap: 8px; }
+.bridge li { flex: 1; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.bridge-col { position: relative; width: 100%; height: 72px; margin-bottom: 4px; border-bottom: 1px solid var(--line-2); }
+.bridge-col i { position: absolute; left: 12%; right: 12%; bottom: 0; min-height: 2px; border-radius: 5px 5px 0 0; }
+.bridge .is-now i { background: color-mix(in srgb, var(--a-bg, var(--accent)) 55%, transparent); }
+.bridge .is-in i { background: var(--ok); border-radius: 5px; }
+.bridge .is-out i { background: repeating-linear-gradient(-45deg, var(--ink-2) 0 3px, transparent 3px 6px); border-radius: 5px; }
+.bridge .is-left i { background: var(--a-bg, var(--accent)); }
+.bank.is-short .bridge .is-out i { background: repeating-linear-gradient(-45deg, var(--danger) 0 3px, transparent 3px 6px); }
+.bank.is-short .bridge .is-left i { background: var(--danger); }
+.bank.is-short .bridge .is-left strong { color: var(--danger); }
+.bridge-mark { font-size: 11px; line-height: 1; color: var(--muted); }
+.bridge .is-in .bridge-mark { color: var(--ok); }
+.bridge strong { max-width: 100%; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.bridge .is-left strong { font-size: 15px; }
+.bank-bills { display: flex; align-items: center; gap: 10px; width: 100%; margin-top: 4px; padding: 12px 0 2px; border: 0; border-top: 1px solid var(--line); background: none; color: inherit; font: inherit; cursor: pointer; }
+.bank-bills .bank-dots { flex: 1; margin: 0; padding: 0; border: 0; }
+.bank-count { font-size: 12px; color: var(--muted); }
+.bank-bills[aria-expanded="true"] .money-group-fold { rotate: 180deg; }
+@media (prefers-reduced-motion: reduce) { .jar-keep, .jar-out, .jar-pick { transition: none; } }
 .bank-dots { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0 -4px; padding-top: 12px; border-top: 1px solid var(--line); }
 .bank-dots i { width: 9px; height: 9px; border-radius: 50%; border: 1.5px solid var(--ink-2); }
 .bank-dots i.is-paid { background: var(--ok); border-color: var(--ok); }
