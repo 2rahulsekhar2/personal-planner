@@ -1126,3 +1126,41 @@ button.kit-token.is-act:hover { background: color-mix(in srgb, var(--a-bg) 34%, 
 .kit-mono.is-round { border-radius: 50%; }
 .form .chip strong { font-variant-numeric: tabular-nums; }
 .formula-keys .btn { flex: 1; min-width: 0; padding-left: 0; padding-right: 0; }
+/* One month of one item: who it is in marks, two figures, a gauge of real against budget, and two switches. */
+.line-head { display: flex; align-items: center; gap: 12px; }
+.line-head-what { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.line-head-what > strong { font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.line-head-marks { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 12px; color: var(--muted); }
+.line-head-marks > span { display: inline-flex; align-items: center; gap: 5px; }
+.line-way { flex-shrink: 0; }
+.line-form.is-out .line-way { color: var(--accent-text); }
+.line-form.is-in .line-way { color: var(--ok); }
+.line-figures { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.line-figures input { min-height: 52px; font-size: 22px; font-weight: 700; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+.line-figures input::placeholder { font-weight: 500; }
+.line-lock { margin-left: 5px; vertical-align: -1px; }
+.line-gauge { display: flex; align-items: center; gap: 10px; margin-top: -4px; }
+.line-form { --line-c: var(--accent); }
+.line-form.is-in { --line-c: var(--ok); }
+.line-track { position: relative; display: flex; flex: 1; height: 12px; border-radius: 6px; overflow: hidden; background: color-mix(in srgb, var(--line-c) 24%, transparent); }
+.line-fill { background: var(--line-c); transition: width .2s ease; }
+.line-spill { background: var(--danger); transition: width .2s ease; }
+.line-form.is-in .line-spill { background: color-mix(in srgb, var(--ok) 60%, var(--ink)); }
+.line-mark { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--surface); }
+.line-diff { min-width: 56px; text-align: right; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--muted); }
+.line-form.is-out .line-diff.is-over { color: var(--danger); }
+.line-form.is-in .line-diff.is-over, .line-form.is-out .line-diff.is-under { color: var(--ok); }
+.line-form.is-skipped .line-figures, .line-form.is-skipped .line-gauge { opacity: .4; }
+.line-usual { align-self: flex-start; gap: 6px; margin-top: -6px; }
+.line-parts-list { list-style: none; margin: 0; padding: 8px 12px; border-radius: 10px; background: var(--surface-2); font-size: 13px; }
+.line-parts-list li { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; color: var(--ink-2); }
+.line-parts-list li.is-skipped { text-decoration: line-through; opacity: .6; }
+.line-parts-list strong { font-variant-numeric: tabular-nums; font-weight: 600; }
+.line-toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.line-toggle { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; border: 1px solid var(--line-2); border-radius: 12px; background: var(--surface); color: var(--ink-2); font: inherit; font-weight: 600; cursor: pointer; }
+.line-toggle:disabled { opacity: .4; cursor: default; }
+.line-tick { display: grid; place-items: center; width: 22px; height: 22px; border: 2px solid var(--line-2); border-radius: 50%; }
+.line-toggle.is-paid.is-on { border-color: var(--ok); background: var(--ok-soft); color: var(--ink); }
+.line-toggle.is-paid.is-on .line-tick { background: var(--ok); border-color: var(--ok); color: var(--surface); }
+.line-toggle.is-skip.is-on { border-color: var(--ink-2); background: var(--surface-2); color: var(--ink); }
+@media (prefers-reduced-motion: reduce) { .line-fill, .line-spill { transition: none; } }

@@ -455,23 +455,78 @@ export function MoneyLineForm({ ctx, money, line, ym, shared, canEdit, onEditIte
     onDone();
   }
 
+  // The month as it reads in the form now, for the gauge: how the real figure sits against the budget.
+  const b = parseAmount(budget) ?? 0;
+  const typed = actual.trim() ? parseAmount(actual) : null;
+  const real = skipped ? null : typed ?? (line.derived ? line.actual : paid ? b : null);
+  const full = Math.max(b, real ?? 0, 1);
+  const over = real !== null ? real - b : 0;
+  const bank = money.banks.find((x) => x.id === line.item.bank_id);
+  const type = money.types.find((x) => x.id === line.item.type_id);
+  const bankTone = bank ? TONES[money.banks.indexOf(bank) % TONES.length] : null;
+  const typeTone = type ? TONES[[...money.types].sort((x, y) => x.kind.localeCompare(y.kind)).indexOf(type) % TONES.length] : null;
+  const first = DateTime.fromISO(line.dates[0]);
+
   return (
-    <form className="form" onSubmit={save} noValidate>
-      <p className="muted" style={{ margin: 0 }}>{line.item.name} in {monthLabel(ym)}. Changes here stay in this month.</p>
-      <label className="field">
-        <span>Budget this month</span>
-        <input value={budget} onChange={(e) => setBudget(e.target.value)} inputMode="decimal" autoFocus={!shared} disabled={shared} />
-        {shared
-          ? <span className="hint">The budget of a shared item is agreed by the circle. To change it, edit the item and send it for approval.</span>
-          : parseAmount(budget) !== line.rule && <span className="hint">Usually {inr(line.rule)}. <button type="button" className="link" onClick={() => setBudget(String(line.rule))}>Use that</button></span>}
-      </label>
-      <label className="field">
-        <span>Actual amount <span className="muted">(optional)</span></span>
-        <input value={actual} onChange={(e) => setActual(e.target.value)} inputMode="decimal" placeholder={line.derived ? `From its parts: ${inr(line.actual!)}` : `What you really ${expense ? "paid" : "received"}`} />
-        {line.parts && <span className="hint">Left empty, it follows what its parts really came to.</span>}
-      </label>
-      <label className="check"><input type="checkbox" checked={paid} onChange={(e) => setPaid(e.target.checked)} /> {expense ? "Paid" : "Received"}</label>
-      {!shared && <label className="check"><input type="checkbox" checked={skipped} onChange={(e) => setSkipped(e.target.checked)} /> Skip this month</label>}
+    <form className={`form line-form ${expense ? "is-out" : "is-in"} ${skipped ? "is-skipped" : ""}`} onSubmit={save} noValidate>
+      {/* What this is: the day it falls due, its name, and where it sits, in marks rather than a sentence. */}
+      <div className="line-head">
+        <span className="line-date" role="img" aria-label={line.dates.length > 1 ? `${line.dates.length} times in ${monthLabel(ym)}` : `Due ${first.toFormat("d LLLL")}`}>
+          {line.dates.length > 1 ? <><strong>×{line.dates.length}</strong><span>times</span></> : <><strong>{first.toFormat("d")}</strong><span>{first.toFormat("ccc")}</span></>}
+        </span>
+        <span className="grow line-head-what">
+          <strong>{line.item.name}</strong>
+          <span className="line-head-marks">
+            {type && <span title={type.name}><span className={`kit-mono is-mini act-${typeTone}`} aria-hidden>{type.name.trim()[0]?.toUpperCase()}</span>{type.name}</span>}
+            {bank && <span title={bank.name}><span className={`kit-mono is-mini act-${bankTone}`} aria-hidden>{bank.name.trim()[0]?.toUpperCase()}</span>{bank.name}</span>}
+          </span>
+        </span>
+        <svg className="line-way" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" role="img" aria-label={expense ? "Expense" : "Income"}><path d={ARROW[line.item.kind]} /></svg>
+      </div>
+
+      <div className="line-figures">
+        <label className="field">
+          <span>Budget{shared && <svg className="line-lock" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M6 11h12v9H6zM8.500 11V8a3.500 3.500 0 0 1 7 0v3" /></svg>}</span>
+          <input value={budget} onChange={(e) => setBudget(e.target.value)} inputMode="decimal" aria-label="Budget this month" autoFocus={!shared} disabled={shared} title={shared ? "Agreed by the circle. Edit the item to change it." : undefined} />
+        </label>
+        <label className="field">
+          <span>Actual</span>
+          <input value={actual} onChange={(e) => setActual(e.target.value)} inputMode="decimal" aria-label="Actual amount" placeholder={line.derived ? inr(line.actual!) : "₹"} title={line.derived ? "From its parts, until one is typed here" : undefined} />
+        </label>
+      </div>
+      {/* The track is the budget; the solid part is what really moved. Past the budget it runs on in another colour. */}
+      <div className="line-gauge" role="img" aria-label={real === null ? `${inr(b)} budgeted, nothing recorded yet` : `${inr(real)} of ${inr(b)} budgeted${over > 0 ? `, ${inr(over)} over` : over < 0 ? `, ${inr(-over)} under` : ""}`}>
+        <span className="line-track">
+          <span className="line-fill" style={{ width: `${real === null ? 0 : (Math.min(real, b) / full) * 100}%` }} />
+          {over > 0 && <span className="line-spill" style={{ width: `${(over / full) * 100}%` }} />}
+          {/* Where the budget ends, when the real figure went past it. */}
+          {over > 0 && <span className="line-mark" style={{ left: `${(b / full) * 100}%` }} />}
+        </span>
+        <span className={`line-diff ${over > 0 ? "is-over" : over < 0 ? "is-under" : ""}`}>{real === null ? "" : over > 0 ? `+${inr(over)}` : over < 0 ? `−${inr(-over)}` : "="}</span>
+      </div>
+      {!shared && parseAmount(budget) !== line.rule && (
+        <button type="button" className="chip chip-sm chip-dashed line-usual" onClick={() => setBudget(String(line.rule))} aria-label={`Use the usual budget, ${inr(line.rule)}`}>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M4 12a8 8 0 1 0 2.500-5.800M4 4.500v4h4" /></svg>{inr(line.rule)}
+        </button>
+      )}
+      {line.parts && line.parts.length > 0 && (
+        <ul className="line-parts-list" aria-label="Worked out from">
+          {line.parts.map((p) => <li key={p.item.id} className={p.skipped ? "is-skipped" : ""}><span>{p.item.name}</span><strong>{inr(p.skipped ? 0 : p.actual ?? p.budget)}</strong></li>)}
+        </ul>
+      )}
+
+      <div className="line-toggles">
+        <button type="button" className={`line-toggle is-paid ${paid ? "is-on" : ""}`} aria-pressed={paid} disabled={skipped} onClick={() => setPaid(!paid)}>
+          <span className="line-tick" aria-hidden>{paid && <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.500l4.500 4.500L19 7.500" /></svg>}</span>
+          {expense ? "Paid" : "Received"}
+        </button>
+        {!shared && (
+          <button type="button" className={`line-toggle is-skip ${skipped ? "is-on" : ""}`} aria-pressed={skipped} onClick={() => setSkipped(!skipped)}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M5 5.500l8 6.500-8 6.500zM18.500 5.500v13" /></svg>
+            Skip this month
+          </button>
+        )}
+      </div>
       {error && <div className="alert alert-error" role="alert">{error}</div>}
       <div className="form-actions">
         {canEdit && <button className="btn btn-primary" disabled={saving}>{saving ? "Saving…" : "Save this month"}</button>}
