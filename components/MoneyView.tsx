@@ -1,18 +1,21 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { DateTime } from "luxon";
 import type { PlannerCtx } from "./usePlanner";
 import type { MoneyCtx } from "./useMoney";
 import Panel from "./Panel";
+import Select from "./Select";
 import MoneySetup, { TONES } from "./MoneySetup";
 import { MoneyItemForm, MoneyLineForm } from "./MoneyItemForm";
-import { amountOn, loanNow, bankPosition, byPerson, byType, expected, forecast, FREQ_LABELS, inr, monthLabel, monthLines, shiftMonth, totals, waitingOn, type Line, type MoneyKind, type Proposal } from "@/lib/money";
+import { amountOn, loanNow, bankPosition, byPerson, byType, expected, forecast, FREQ_LABELS, inr, monthLabel, monthLines, shiftMonth, totals, waitingOn, yearRows, type Line, type MoneyKind, type Proposal } from "@/lib/money";
 import { canAdd, isCurrent, type Circle } from "@/lib/circles";
 import { todayISO } from "@/lib/time";
 
-type Tab = "month" | "items" | "banks" | "insights" | "setup";
+type Tab = "month" | "year" | "items" | "banks" | "insights" | "setup";
+const TABS: { value: Tab; label: string }[] = [{ value: "month", label: "Month" }, { value: "year", label: "Year" }, { value: "items", label: "Items" }, { value: "banks", label: "Banks" }, { value: "insights", label: "Insights" }, { value: "setup", label: "Setup" }];
 // `again`: a rejected request, opened to be changed and sent once more.
-type PanelState = { kind: "item"; id?: string; as?: MoneyKind; again?: Proposal } | { kind: "line"; id: string } | null;
+// `date`: the first date a new item starts with. `ym`: the month of the line, when it is not the month on show.
+type PanelState = { kind: "item"; id?: string; as?: MoneyKind; again?: Proposal; date?: string } | { kind: "line"; id: string; ym?: string } | null;
 
 /** Money is off: explain it, email a code, and turn it on when the code comes back right. */
 function MoneyGate({ ctx, money }: { ctx: PlannerCtx; money: MoneyCtx }) {
@@ -317,6 +320,111 @@ function Insights({ lines, view, ym, today }: { lines: Line[]; view: MoneyCtx; y
   );
 }
 
+const plain = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 });
+const amt = (n: number) => (n ? plain.format(n) : "");
+/**
+ * Twelve months side by side, a row an item: a filled cell is a month the item falls due, so a row's pattern is
+ * how often it comes. A filled cell opens that month of the item; an empty one, or a month's name, adds an item there.
+ */
+function Year({ view, from, nowYm, canEdit, groupBy, onLine, onItem, onAdd }: {
+  view: MoneyCtx; from: string; nowYm: string; canEdit: boolean; groupBy: (typeId: string | null) => { name: string; tone: string | null };
+  onLine: (id: string, ym: string) => void; onItem: (id: string) => void; onAdd: (ym: string, kind?: MoneyKind) => void;
+}) {
+  const { months, rows } = useMemo(() => yearRows(view.items, view.entries, view.increases, from), [view.items, view.entries, view.increases, from]);
+  // The types folded shut, each down to its row of totals.
+  const [shut, setShut] = useState<Set<string>>(new Set());
+  if (!view.items.length) return <p className="empty card">No items yet. Add an income or an expense, and the months it falls in show here.</p>;
+  const sums = (rs: typeof rows) => months.map((_, n) => rs.reduce((s, r) => s + r.values[n], 0));
+  const now = (ym: string) => (ym === nowYm ? "is-now" : "");
+  const short = (ym: string) => DateTime.fromISO(`${ym}-01`);
+  const figures = (values: number[]) => <>{values.map((v, n) => <td key={months[n]} className={now(months[n])}>{amt(v)}</td>)}<td className="yr-total">{amt(values.reduce((s, v) => s + v, 0))}</td></>;
+
+  const section = (kind: MoneyKind, title: string) => {
+    const own = rows.filter((r) => r.item.kind === kind);
+    const word = kind === "expense" ? "paid" : "received";
+    const groups = [...new Set(own.map((r) => r.item.type_id))]
+      .map((id) => ({ id, ...groupBy(id), rows: own.filter((r) => r.item.type_id === id) }))
+      .sort((a, b) => b.rows.reduce((s, r) => s + r.total, 0) - a.rows.reduce((s, r) => s + r.total, 0));
+    return (
+      <tbody className={kind === "income" ? "yr-in" : "yr-out"}>
+        {/* A break in the table between money in and money out. */}
+        {kind === "expense" && <tr className="yr-gap" aria-hidden><td colSpan={months.length + 2} /></tr>}
+        <tr className="yr-kind"><th scope="rowgroup">{title}</th>{figures(sums(own))}</tr>
+        {own.length === 0 && <tr><th scope="row" className="yr-none">Nothing in these months</th><td colSpan={months.length + 1} /></tr>}
+        {groups.map((g) => (
+          <Fragment key={g.id ?? "none"}>
+            {groups.length > 1 && (
+              <tr className={`yr-type ${g.tone ? `act-${g.tone}` : ""}`}>
+                <th scope="rowgroup">
+                  <button className="yr-fold" aria-expanded={!shut.has(`${kind}:${g.id}`)} onClick={() => setShut((was) => { const next = new Set(was); if (!next.delete(`${kind}:${g.id}`)) next.add(`${kind}:${g.id}`); return next; })}>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M6 9l6 6 6-6" /></svg>
+                    <span className={`kit-mono is-mini ${g.tone ? `act-${g.tone}` : "is-none"}`} aria-hidden>{g.name[0]?.toUpperCase()}</span>
+                    <span>{g.name}</span>
+                  </button>
+                </th>
+                {figures(sums(g.rows))}
+              </tr>
+            )}
+            {!(groups.length > 1 && shut.has(`${kind}:${g.id}`)) && g.rows.map((r) => (
+              <tr key={r.item.id}>
+                <th scope="row"><button className="yr-name" title={r.item.name} onClick={() => onItem(r.item.id)}>{r.item.name}</button></th>
+                {r.cells.map((l, n) => {
+                  const ym = months[n];
+                  const late = !!l && !l.paid && !l.skipped && ym < nowYm;
+                  return (
+                    <td key={ym} className={now(ym)}>
+                      {l ? (
+                        <button className={`yr-cell ${g.tone ? `act-${g.tone}` : "is-none"} ${l.paid ? "is-paid" : ""} ${l.skipped ? "is-skipped" : ""} ${late ? "is-late" : ""}`} aria-label={`${r.item.name}, ${monthLabel(ym)}: ${inr(expected(l))}, ${l.skipped ? "skipped" : l.paid ? word : late ? `not ${word}, overdue` : `not ${word}`}`} onClick={() => onLine(r.item.id, ym)}>
+                          {l.paid && <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.6" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>}
+                          {plain.format(expected(l))}
+                        </button>
+                      ) : canEdit ? <button className="yr-add" aria-label={`Add ${kind === "expense" ? "an expense" : "an income"} in ${monthLabel(ym)}`} onClick={() => onAdd(ym, kind)}>＋</button> : null}
+                    </td>
+                  );
+                })}
+                <td className="yr-total">{amt(r.total)}</td>
+              </tr>
+            ))}
+          </Fragment>
+        ))}
+      </tbody>
+    );
+  };
+  const inSums = sums(rows.filter((r) => r.item.kind === "income"));
+  const outSums = sums(rows.filter((r) => r.item.kind === "expense"));
+  const left = months.map((_, n) => inSums[n] - outSums[n]);
+  const leftAll = left.reduce((s, v) => s + v, 0);
+  const signed = (v: number) => `${v < 0 ? "− " : ""}${plain.format(Math.abs(v))}`;
+
+  return (
+    <div className="card yr" tabIndex={0} role="region" aria-label="The year, month by month">
+      <table>
+        <thead>
+          <tr>
+            <th scope="col">Item</th>
+            {months.map((ym, n) => {
+              // The year is said where it starts: on the first column, and on each January.
+              const label = <>{short(ym).toFormat("LLL")}{(n === 0 || ym.endsWith("-01")) && <span>{ym.slice(0, 4)}</span>}</>;
+              return <th key={ym} scope="col" className={now(ym)}>{canEdit ? <button className="yr-month" aria-label={`Add an income or expense in ${monthLabel(ym)}`} title={`Add in ${monthLabel(ym)}`} onClick={() => onAdd(ym)}>{label}</button> : <span className="yr-month">{label}</span>}</th>;
+            })}
+            <th scope="col" className="yr-total">12 months</th>
+          </tr>
+        </thead>
+        {section("income", "Income")}
+        {section("expense", "Expenses")}
+        <tfoot>
+          <tr className="yr-gap" aria-hidden><td colSpan={months.length + 2} /></tr>
+          <tr className="yr-kind">
+            <th scope="row">Left</th>
+            {left.map((v, n) => <td key={months[n]} className={`${now(months[n])} ${v < 0 ? "is-short" : ""}`}>{signed(v)}</td>)}
+            <td className={`yr-total ${leftAll < 0 ? "is-short" : ""}`}>{signed(leftAll)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
 type ItemFilter = "all" | "income" | "expense" | "fix";
 /**
  * Every income and expense item in the budget in view, whatever the month: what it is, what it comes to now, how
@@ -473,6 +581,9 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
   const [picked, setPicked] = useState<string | null>(null);
   const nowYm = todayISO(ctx.tz).slice(0, 7);
   const ym = picked ?? nowYm;
+  // The year starts at the current month until it is moved by hand.
+  const [yearPick, setYearPick] = useState<string | null>(null);
+  const yearFrom = yearPick ?? nowYm;
 
   // Whose budget is showing: mine, or one circle's that has a family plan.
   const [scopeId, setScopeId] = useState<string | null>(null);
@@ -599,11 +710,26 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
     </div>
   );
 
-  const panelLine = panel?.kind === "line" ? lines.find((l) => l.item.id === panel.id) : undefined;
+  // A line opened from the year is of the month clicked, not the month on show.
+  const lineYm = (panel?.kind === "line" && panel.ym) || ym;
+  const panelLine = panel?.kind === "line" ? (lineYm === ym ? lines : monthLines(view.items, view.entries, view.increases, lineYm)).find((l) => l.item.id === panel.id) : undefined;
   const panelItem = panel?.kind === "item" && panel.id ? view.items.find((i) => i.id === panel.id) : undefined;
   const close = () => setPanel(null);
   const openLine = (l: Line) => setPanel({ kind: "line", id: l.item.id });
   const pick = (id: string | null) => { setScopeId(id); setPanel(null); };
+
+  const tabStrip = (
+    <div className="view-toggle money-tabs" role="group" aria-label="Money section">
+      {TABS.map((t) => <button key={t.value} className={tab === t.value ? "is-active" : ""} aria-pressed={tab === t.value} onClick={() => setTab(t.value)}>{t.label}</button>)}
+    </div>
+  );
+  const scopeBar = families.length > 0 && (
+    <div className="scope-bar" role="group" aria-label="Whose budget">
+      <button className={`chip ${!scope ? "is-selected" : ""}`} aria-pressed={!scope} onClick={() => pick(null)}>Mine</button>
+      {families.map((c) => <button key={c.id} className={`chip ${scope?.id === c.id ? "is-selected" : ""}`} aria-pressed={scope?.id === c.id} onClick={() => pick(c.id)}>{c.name}</button>)}
+      {scope && !canEdit && <span className="hint" style={{ margin: 0 }}>You are a viewer here: you can look, not change.</span>}
+    </div>
+  );
 
   return (
     <>
@@ -616,19 +742,10 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
 
       <main className={`main ${panel ? "has-panel" : ""}`}>
         <section className="content">
-          <div className="page">
-            <div className="view-toggle money-tabs" role="group" aria-label="Money section">
-              {([["month", "Month"], ["items", "Items"], ["banks", "Banks"], ["insights", "Insights"], ["setup", "Setup"]] as const).map(([t, label]) => (
-                <button key={t} className={tab === t ? "is-active" : ""} aria-pressed={tab === t} onClick={() => setTab(t)}>{label}</button>
-              ))}
-            </div>
-            {families.length > 0 && (
-              <div className="scope-bar" role="group" aria-label="Whose budget">
-                <button className={`chip ${!scope ? "is-selected" : ""}`} aria-pressed={!scope} onClick={() => pick(null)}>Mine</button>
-                {families.map((c) => <button key={c.id} className={`chip ${scope?.id === c.id ? "is-selected" : ""}`} aria-pressed={scope?.id === c.id} onClick={() => pick(c.id)}>{c.name}</button>)}
-                {scope && !canEdit && <span className="hint" style={{ margin: 0 }}>You are a viewer here: you can look, not change.</span>}
-              </div>
-            )}
+          <div className={`page ${tab === "year" ? "is-wide" : ""}`}>
+            {/* The year keeps the grid high on the screen: the sections and whose budget sit in its one bar, not on rows of their own. */}
+            {tab !== "year" && tabStrip}
+            {tab !== "year" && scopeBar}
             {money.error && <div className="alert alert-error" role="alert">Couldn’t load your budget: {money.error}. <button className="link" onClick={() => money.reload()}>Retry</button></div>}
 
             {tab === "month" && (
@@ -657,6 +774,31 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
                 <Lines groupBy={groupBy} lines={lines.filter((l) => l.item.kind === "income")} meta={new Set(lines.filter((l) => l.item.kind === "income").map((l) => l.item.type_id)).size > 1 ? bankOnly : meta} onToggle={togglePaid} onOpen={openLine} locked={!canEdit} empty={`No income in ${monthLabel(ym)}.`} />
                 {head("Expenses", "expense")}
                 <Lines groupBy={groupBy} lines={lines.filter((l) => l.item.kind === "expense")} meta={new Set(lines.filter((l) => l.item.kind === "expense").map((l) => l.item.type_id)).size > 1 ? bankOnly : meta} onToggle={togglePaid} onOpen={openLine} locked={!canEdit} empty={`No expenses in ${monthLabel(ym)}.`} />
+              </>
+            )}
+
+            {tab === "year" && (
+              <>
+                {/* Wide: the tabs and chips as they are elsewhere. On a phone each folds into a button that opens its list. */}
+                <div className="toolbar yr-bar">
+                  <div className="yr-wide">{tabStrip}</div>
+                  <div className="yr-narrow yr-pick is-left" aria-label="Money section"><Select id="money-section" value={tab} options={TABS} onChange={(v) => setTab(v as Tab)} /></div>
+                  <div className="toolbar-group">
+                    <button className="btn" onClick={() => setYearPick(shiftMonth(yearFrom, -12))} aria-label="Previous 12 months">‹</button>
+                    <button className="btn" onClick={() => setYearPick(shiftMonth(yearFrom, 12))} aria-label="Next 12 months">›</button>
+                  </div>
+                  <h1 className="toolbar-title" aria-label={`${monthLabel(yearFrom)} to ${monthLabel(shiftMonth(yearFrom, 11))}`}>
+                    <span className="yr-wide">{DateTime.fromISO(`${yearFrom}-01`).toFormat("LLL yyyy")} to {DateTime.fromISO(`${shiftMonth(yearFrom, 11)}-01`).toFormat("LLL yyyy")}</span>
+                    <span className="yr-narrow">{DateTime.fromISO(`${yearFrom}-01`).toFormat("LLL yy")} – {DateTime.fromISO(`${shiftMonth(yearFrom, 11)}-01`).toFormat("LLL yy")}</span>
+                  </h1>
+                  {yearFrom !== nowYm && <button className="btn btn-sm" onClick={() => setYearPick(null)}><span className="yr-wide">This month</span><span className="yr-narrow">Now</span></button>}
+                  <div className="yr-wide yr-scope">{scopeBar}</div>
+                  {families.length > 0 && <div className="yr-narrow yr-pick yr-scope" aria-label="Whose budget"><Select id="money-scope" value={sid ?? ""} options={[{ value: "", label: "Mine" }, ...families.map((c) => ({ value: c.id, label: c.name }))]} onChange={(v) => pick(v || null)} /></div>}
+                </div>
+                <Year view={view} from={yearFrom} nowYm={nowYm} canEdit={canEdit} groupBy={groupBy}
+                  onLine={(id, m) => setPanel({ kind: "line", id, ym: m })} onItem={(id) => setPanel({ kind: "item", id })}
+                  onAdd={(m, kind) => setPanel({ kind: "item", as: kind, date: m === nowYm ? todayISO(ctx.tz) : `${m}-01` })} />
+                <p className="ins-key yr-key"><span><i className="is-paid" />done</span><span><i className="is-plan" />still to come</span><span><i className="is-spill" />overdue</span></p>
               </>
             )}
 
@@ -721,10 +863,10 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
           </div>
         </section>
         {panel && (
-          <Panel title={panel.kind === "line" ? monthLabel(ym) : `${panelItem ? "Edit" : "New"} ${formKind} item`} onClose={close}>
+          <Panel title={panel.kind === "line" ? monthLabel(lineYm) : `${panelItem ? "Edit" : "New"} ${formKind} item`} onClose={close}>
             {panel.kind === "line"
-              ? panelLine ? <MoneyLineForm key={`${panelLine.item.id}-${ym}-${panelLine.paid}-${panelLine.skipped}-${panelLine.actual}-${panelLine.budget}`} ctx={ctx} money={money} line={panelLine} ym={ym} shared={!!scope} canEdit={canEdit} onEditItem={() => setPanel({ kind: "item", id: panelLine.item.id })} onDone={close} /> : <p className="muted">This item is not in {monthLabel(ym)}.</p>
-              : <MoneyItemForm key={panel.again?.id ?? panel.id ?? `new-${panel.as}-${sid}`} ctx={ctx} money={view} scope={scope} canEdit={canEdit} existing={panelItem} again={panel.again} kind={panel.as} onKind={setFormKind} onDone={close} />}
+              ? panelLine ? <MoneyLineForm key={`${panelLine.item.id}-${lineYm}-${panelLine.paid}-${panelLine.skipped}-${panelLine.actual}-${panelLine.budget}`} ctx={ctx} money={money} line={panelLine} ym={lineYm} shared={!!scope} canEdit={canEdit} onEditItem={() => setPanel({ kind: "item", id: panelLine.item.id })} onDone={close} /> : <p className="muted">This item is not in {monthLabel(lineYm)}.</p>
+              : <MoneyItemForm key={panel.again?.id ?? panel.id ?? `new-${panel.as}-${panel.date}-${sid}`} date={panel.date} ctx={ctx} money={view} scope={scope} canEdit={canEdit} existing={panelItem} again={panel.again} kind={panel.as} onKind={setFormKind} onDone={close} />}
           </Panel>
         )}
       </main>

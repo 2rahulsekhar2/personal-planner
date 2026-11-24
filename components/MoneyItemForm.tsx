@@ -16,8 +16,9 @@ const NEW = "__new";
  * Add or change an income or expense: the rule for every month it falls in.
  * `money` holds the budget in view only. In a circle (`scope`) saving sends a request the other members approve.
  * `again` is a rejected request being changed and sent once more: the form starts from what was asked.
+ * `date`: the first date a new item starts with, when it was asked for from a month.
  */
-export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kind: startKind, onKind, onDone }: { ctx: PlannerCtx; money: MoneyCtx; scope: Circle | null; canEdit: boolean; existing?: MoneyItem; again?: Proposal; kind?: MoneyKind; onKind?: (kind: MoneyKind) => void; onDone: () => void }) {
+export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kind: startKind, date, onKind, onDone }: { ctx: PlannerCtx; money: MoneyCtx; scope: Circle | null; canEdit: boolean; existing?: MoneyItem; again?: Proposal; kind?: MoneyKind; date?: string; onKind?: (kind: MoneyKind) => void; onDone: () => void }) {
   const { supabase, toast } = ctx;
   const from: Partial<MoneyItem> | undefined = again?.payload ?? existing;
   // Someone else has to agree: another current owner or member. In a circle of one, a request is carried out at once.
@@ -28,7 +29,7 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
   // Later changes of the amount, each from a date on, as typed.
   const [steps, setSteps] = useState<{ from: string; amount: string }[]>(() => [...(from?.amount_steps ?? [])].sort((a, b) => a.from.localeCompare(b.from)).map((x) => ({ from: x.from, amount: String(x.amount) })));
   const [freq, setFreq] = useState<MoneyFreq>(from?.freq ?? "monthly");
-  const [start, setStart] = useState(from?.start_date ?? todayISO(ctx.tz));
+  const [start, setStart] = useState(from?.start_date ?? date ?? todayISO(ctx.tz));
   const [end, setEnd] = useState(from?.end_date ?? "");
   const [bank, setBank] = useState(from?.bank_id ?? "");
   const [type, setType] = useState(from?.type_id ?? "");
