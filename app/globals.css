@@ -639,11 +639,37 @@ textarea { resize: vertical; }
 .items-list li + li { border-top: 1px solid var(--line); }
 .items-row { display: flex; align-items: center; gap: 12px; width: 100%; padding: 10px 16px; border: 0; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .items-row:hover { background: var(--surface-2); }
-.items-row.is-ended { opacity: .55; }
-.items-what { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.items-row.is-ended { opacity: .5; }
+.items-row > .kit-mono { width: 30px; height: 30px; border-radius: 9px; font-size: 13px; }
+.items-what { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
 .items-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.items-what .line-meta { flex-wrap: wrap; gap: 2px 10px; }
-.items-what .line-meta > span { display: inline-flex; align-items: center; gap: 5px; }
+/* An item's weight in the month. */
+.items-bar { display: block; height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--a-bg, var(--line-2)) 22%, transparent); }
+.items-bar span { display: block; height: 100%; border-radius: 3px; background: var(--a-bg, var(--muted)); }
+.items-bar.is-none { background: var(--surface-2); }
+/* The small marks under the amount: how often, which bank, and what sort of item. */
+.items-marks { display: flex; align-items: center; justify-content: flex-end; gap: 5px; margin-top: 4px; }
+.money-amt .items-mark { display: grid; place-items: center; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 5px; background: var(--surface-2); color: var(--ink-2); font-size: 9px; font-weight: 700; }
+.money-amt .items-mark.is-sum { background: var(--accent-soft); color: var(--accent-text); font-size: 11px; font-style: italic; }
+.money-amt .items-mark.is-off { text-decoration: line-through; }
+.money-amt .items-from { font-size: 11px; }
+.items-steps { color: var(--ink-2); }
+.items-ring circle { fill: none; stroke: var(--line-2); stroke-width: 3; }
+.items-ring circle + circle { stroke: var(--ok); stroke-linecap: round; transform: rotate(-90deg); transform-origin: center; }
+.items-marks .kit-mono.items-fix { border-color: var(--warn); }
+/* A part, under the item that uses it. */
+.items-row.is-part { padding-top: 7px; padding-bottom: 7px; }
+.items-row.is-part > .kit-mono { width: 22px; height: 22px; border-radius: 7px; font-size: 11px; }
+.items-row.is-part .items-name { font-weight: 500; font-size: 13px; color: var(--ink-2); }
+.items-row.is-part .money-amt strong { font-weight: 500; font-size: 13px; color: var(--ink-2); }
+.items-kind { display: flex; flex-direction: column; gap: 8px; }
+.items-kind h2 { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 16px; }
+/* An average month at the top: a strip for what comes in and one for what goes out, cut by type. */
+.items-flow { display: flex; flex-direction: column; gap: 10px; font-variant-numeric: tabular-nums; }
+.flow-track { display: block; height: 14px; }
+.flow-track > span { display: flex; gap: 2px; height: 100%; min-width: 4px; }
+.flow-track i { min-width: 3px; border-radius: 4px; background: var(--a-bg, var(--muted)); }
+.flow-track i.is-none { background: var(--line-2); }
 .items-fix { color: var(--warn); font-weight: 600; }
 /* An item's amount over time: a row for each stretch, the figure first, then when it holds. A dot marks the
    one in force today. */
@@ -1172,3 +1198,81 @@ button.kit-token.is-act:hover { background: color-mix(in srgb, var(--a-bg) 34%, 
 .loan-facts div { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
 .loan-facts dt { font-size: 12px; color: var(--muted); }
 .loan-facts dd { margin: 0; font-weight: 700; font-variant-numeric: tabular-nums; }
+/* A computed item's formula in the item form: the sum so far, the signs, a number, and the items to use. */
+.formula { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 48px; padding: 10px 12px; border: 1px solid var(--line-2); border-radius: 10px; background: var(--surface-2); font-variant-numeric: tabular-nums; }
+.formula.is-open { border-style: dashed; }
+.formula-item { padding: 2px 9px; border-radius: 999px; background: color-mix(in srgb, var(--accent) 18%, transparent); font-weight: 600; font-size: 13px; }
+.formula-sign { font-weight: 700; color: var(--ink-2); }
+.formula-num { font-weight: 600; }
+.formula-keys, .formula-figure { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.formula-keys .btn { min-width: 40px; }
+.formula-figure input { flex: 1; min-width: 96px; }
+.formula-now { margin: 10px 0 0; }
+/* A computed line's parts in the month: indented under it, quieter, with no tick of their own. */
+.money-lines .line-part { padding: 4px 0 4px 44px; border-bottom-style: dashed; }
+.money-lines .line-part .task-title { font-size: 13px; color: var(--ink-2); }
+.money-lines .line-part .money-amt { font-size: 13px; color: var(--ink-2); }
+.items-row > .kit-mono.items-fix { border-color: var(--warn); color: var(--warn); }
+.items-row .money-amt { min-width: 84px; } /* so the bars end in one line */
+/* The item form, drawn: a wide switch for which way the money moves, marks on the choices, a large amount. */
+.kind-switch { display: grid; grid-template-columns: 1fr 1fr; align-self: stretch; border-radius: 12px; }
+.kind-switch button { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; font-weight: 600; color: var(--ink-2); }
+.kind-switch button.is-active.is-out { background: var(--accent); color: var(--accent-ink); }
+.kind-switch button.is-active.is-in { background: var(--ok); color: var(--surface); }
+.sort-switch { margin-top: 0; }
+.sort-mark { display: inline-grid; place-items: center; font-size: 9px; opacity: .8; }
+.sort-mark.is-sum { font-size: 14px; font-style: italic; font-weight: 700; }
+.freq-mark { display: grid; place-items: center; min-width: 16px; height: 16px; border-radius: 5px; background: color-mix(in srgb, currentColor 16%, transparent); font-size: 9px; font-weight: 700; }
+.input-lead { font-size: 17px !important; font-weight: 600; }
+.amt-step.is-lead > input { min-height: 52px; font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
+.amt-step.is-lead { grid-template-columns: minmax(120px, 180px) 1fr auto; }
+.amt-chart { display: flex; align-items: flex-end; gap: 3px; height: 36px; margin-bottom: 4px; }
+.amt-chart span { flex: 1; max-width: 56px; border-radius: 4px 4px 0 0; background: color-mix(in srgb, var(--accent) 28%, transparent); }
+.amt-chart span.is-now { background: var(--accent); }
+.loan-chart { height: 64px; border-radius: 10px 10px 0 0; background: var(--surface-2); overflow: hidden; margin-bottom: -16px; }
+.loan-chart svg { display: block; width: 100%; height: 100%; }
+.loan-chart polygon { fill: color-mix(in srgb, var(--accent) 22%, transparent); }
+.loan-chart polyline { fill: none; stroke: var(--accent); stroke-width: 2; }
+.loan-chart line { stroke: var(--ink-2); stroke-width: 1; stroke-dasharray: 3 3; }
+.loan-chart + .loan-facts { border-radius: 0 0 10px 10px; }
+.kit-mono.is-round { border-radius: 50%; }
+.form .chip strong { font-variant-numeric: tabular-nums; }
+.formula-keys .btn { flex: 1; min-width: 0; padding-left: 0; padding-right: 0; }
+/* One month of one item: who it is in marks, two figures, a gauge of real against budget, and two switches. */
+.line-head { display: flex; align-items: center; gap: 12px; }
+.line-head-what { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.line-head-what > strong { font-size: 17px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.line-head-marks { display: flex; flex-wrap: wrap; gap: 2px 12px; font-size: 12px; color: var(--muted); }
+.line-head-marks > span { display: inline-flex; align-items: center; gap: 5px; }
+.line-way { flex-shrink: 0; }
+.line-form.is-out .line-way { color: var(--accent-text); }
+.line-form.is-in .line-way { color: var(--ok); }
+.line-figures { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.line-figures input { min-height: 52px; font-size: 22px; font-weight: 700; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+.line-figures input::placeholder { font-weight: 500; }
+.line-lock { margin-left: 5px; vertical-align: -1px; }
+.line-gauge { display: flex; align-items: center; gap: 10px; margin-top: -4px; }
+.line-form { --line-c: var(--accent); }
+.line-form.is-in { --line-c: var(--ok); }
+.line-track { position: relative; display: flex; flex: 1; height: 12px; border-radius: 6px; overflow: hidden; background: color-mix(in srgb, var(--line-c) 24%, transparent); }
+.line-fill { background: var(--line-c); transition: width .2s ease; }
+.line-spill { background: var(--danger); transition: width .2s ease; }
+.line-form.is-in .line-spill { background: color-mix(in srgb, var(--ok) 60%, var(--ink)); }
+.line-mark { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--surface); }
+.line-diff { min-width: 56px; text-align: right; font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; color: var(--muted); }
+.line-form.is-out .line-diff.is-over { color: var(--danger); }
+.line-form.is-in .line-diff.is-over, .line-form.is-out .line-diff.is-under { color: var(--ok); }
+.line-form.is-skipped .line-figures, .line-form.is-skipped .line-gauge { opacity: .4; }
+.line-usual { align-self: flex-start; gap: 6px; margin-top: -6px; }
+.line-parts-list { list-style: none; margin: 0; padding: 8px 12px; border-radius: 10px; background: var(--surface-2); font-size: 13px; }
+.line-parts-list li { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; color: var(--ink-2); }
+.line-parts-list li.is-skipped { text-decoration: line-through; opacity: .6; }
+.line-parts-list strong { font-variant-numeric: tabular-nums; font-weight: 600; }
+.line-toggles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.line-toggle { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 48px; border: 1px solid var(--line-2); border-radius: 12px; background: var(--surface); color: var(--ink-2); font: inherit; font-weight: 600; cursor: pointer; }
+.line-toggle:disabled { opacity: .4; cursor: default; }
+.line-tick { display: grid; place-items: center; width: 22px; height: 22px; border: 2px solid var(--line-2); border-radius: 50%; }
+.line-toggle.is-paid.is-on { border-color: var(--ok); background: var(--ok-soft); color: var(--ink); }
+.line-toggle.is-paid.is-on .line-tick { background: var(--ok); border-color: var(--ok); color: var(--surface); }
+.line-toggle.is-skip.is-on { border-color: var(--ink-2); background: var(--surface-2); color: var(--ink); }
+@media (prefers-reduced-motion: reduce) { .line-fill, .line-spill { transition: none; } }

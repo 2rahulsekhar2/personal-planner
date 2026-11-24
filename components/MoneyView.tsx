@@ -7,7 +7,7 @@ import Panel from "./Panel";
 import Select from "./Select";
 import MoneySetup, { TONES } from "./MoneySetup";
 import { MoneyItemForm, MoneyLineForm } from "./MoneyItemForm";
-import { amountOn, loanNow, bankPosition, byPerson, byType, expected, forecast, FREQ_LABELS, inr, monthLabel, monthLines, shiftMonth, totals, waitingOn, yearRows, type Line, type MoneyKind, type Proposal } from "@/lib/money";
+import { amountOn, loanNow, bankPosition, byPerson, byType, expected, forecast, formulaItems, FREQ_LABELS, inr, monthLabel, monthLines, partIds, shiftMonth, totals, waitingOn, withParts, yearRows, type Line, type MoneyFreq, type MoneyKind, type Proposal } from "@/lib/money";
 import { canAdd, isCurrent, type Circle } from "@/lib/circles";
 import { todayISO } from "@/lib/time";
 
@@ -94,7 +94,8 @@ function Lines({ lines, meta, onToggle, onOpen, empty, locked, flat, groupBy }: 
   const verb = lines[0].item.kind === "expense" ? "paid" : "received";
   // `noLeaf`: every line around this one falls on the same day, which is said once above them instead.
   const row = (l: Line, noLeaf: boolean) => (
-    <li key={l.item.id} className={`task-row ${l.paid ? "is-done" : ""} ${l.skipped ? "is-skipped" : ""}`}>
+    <Fragment key={l.item.id}>
+    <li className={`task-row ${l.paid ? "is-done" : ""} ${l.skipped ? "is-skipped" : ""}`}>
       <button className={`task-check ${l.paid ? "is-checked" : ""}`} disabled={l.skipped || locked} aria-pressed={l.paid} aria-label={`${l.item.name}: ${l.paid ? `mark not ${verb}` : `mark ${verb}`}`} onClick={() => onToggle(l)}>
         {l.paid && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>}
       </button>
@@ -106,7 +107,7 @@ function Lines({ lines, meta, onToggle, onOpen, empty, locked, flat, groupBy }: 
       )}
       <button className="task-main" onClick={() => onOpen(l)}>
         <span className="task-title">{l.item.name}</span>
-        {(l.skipped || meta?.(l)) && <span className="task-due line-meta">{l.skipped ? "Skipped" : meta!(l)}</span>}
+        {(l.skipped || l.warn || meta?.(l)) && <span className="task-due line-meta">{l.skipped ? "Skipped" : l.warn ? <span className="items-fix">{l.warn}</span> : meta!(l)}</span>}
       </button>
       <span className="money-amt">
         <strong>{inr(expected(l))}</strong>
@@ -115,6 +116,17 @@ function Lines({ lines, meta, onToggle, onOpen, empty, locked, flat, groupBy }: 
         {l.actual === null && Math.abs(l.budget - l.rule) >= 1 && <span>usually {inr(l.rule)}</span>}
       </span>
     </li>
+    {/* A computed item's parts, under it: each opens its own month, where what it really came to is recorded. */}
+    {withParts(l.parts ?? []).map((p) => (
+      <li key={p.item.id} className={`task-row line-part ${p.skipped ? "is-skipped" : ""}`}>
+        <button className="task-main" onClick={() => onOpen(p)} aria-label={`${p.item.name}, part of ${l.item.name}`}>
+          <span className="task-title">{p.item.name}</span>
+          {p.skipped && <span className="task-due line-meta">Skipped</span>}
+        </button>
+        <span className="money-amt"><span>{inr(expected(p))}</span></span>
+      </li>
+    ))}
+    </Fragment>
   );
 
   const typeIds = [...new Set(lines.map((l) => l.item.type_id))];
@@ -426,23 +438,113 @@ function Year({ view, from, nowYm, canEdit, groupBy, onLine, onItem, onAdd }: {
 }
 
 type ItemFilter = "all" | "income" | "expense" | "fix";
+const FREQ_MARK: Record<MoneyFreq, string> = { once: "1", daily: "D", weekly: "W", monthly: "M", yearly: "Y" };
+/** What an amount each time comes to in an average month. A one-time item has no monthly weight. */
+const perMonth = (amount: number, freq: MoneyFreq) => (freq === "daily" ? (amount * 365) / 12 : freq === "weekly" ? (amount * 52) / 12 : freq === "monthly" ? amount : freq === "yearly" ? amount / 12 : 0);
+
 /**
- * Every income and expense item in the budget in view, whatever the month: what it is, what it comes to now, how
- * often, and from where. Items missing a bank or a type are marked, and can be found with the "To fix" filter.
+ * Every income and expense item in the budget in view, whatever the month, drawn rather than described: a bar
+ * for how much of the month each one is, a letter for how often, a monogram for its type and its bank. Parts sit
+ * under the item that uses them. What a mark means is in its tooltip, and the whole row is read out in words.
  */
 function Items({ view, today, canEdit, onOpen, onNew }: { view: MoneyCtx; today: string; canEdit: boolean; onOpen: (id: string) => void; onNew: () => void }) {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<ItemFilter>("all");
+  type Item = MoneyCtx["items"][number];
   const pct = new Map(view.increases.map((i) => [i.id, Number(i.percent)]));
   const bankAt = new Map(view.banks.map((b, n) => [b.id, { name: b.name, tone: TONES[n % TONES.length] }]));
-  const typeName = new Map(view.types.map((t) => [t.id, t.name]));
-  const broken = (i: MoneyCtx["items"][number]) => !i.bank_id || !bankAt.has(i.bank_id) || !i.type_id || !typeName.has(i.type_id);
+  // The same colours as in Insights and Setup.
+  const typeAt = new Map([...view.types].sort((a, b) => a.kind.localeCompare(b.kind)).map((t, n) => [t.id, { name: t.name, tone: TONES[n % TONES.length] }]));
+  const broken = (i: Item) => !i.bank_id || !bankAt.has(i.bank_id) || !i.type_id || !typeAt.has(i.type_id);
   const counts = { all: view.items.length, income: view.items.filter((i) => i.kind === "income").length, expense: view.items.filter((i) => i.kind === "expense").length, fix: view.items.filter(broken).length };
+  const parts = partIds(view.items);
+  const parentOf = new Map(view.items.flatMap((i) => formulaItems(i.formula).map((id) => [id, i] as const)));
+  const thisMonth = new Map(withParts(monthLines(view.items, view.entries, view.increases, today.slice(0, 7))).map((l) => [l.item.id, l]));
+  // Each item's figures once: what it comes to each time now, and its weight in an average month.
+  const facts = new Map(view.items.map((i) => {
+    const ended = !!i.end_date && i.end_date < today;
+    const later = i.start_date > today;
+    const percent = (i.freq !== "once" && i.increase_id && pct.get(i.increase_id)) || 0;
+    const owes = i.loan && !i.formula ? loanNow(i, percent, today).balance : null;
+    const amount = i.formula ? thisMonth.get(i.id)?.budget ?? 0 : amountOn(i, later ? i.start_date : ended ? i.end_date! : today, percent);
+    const weight = ended || owes === 0 ? 0 : i.formula ? amount : perMonth(amount, i.freq);
+    return [i.id, { ended, later, owes, amount, weight }] as const;
+  }));
   const text = q.trim().toLowerCase();
-  const rows = view.items
+  const shown = view.items
     .filter((i) => (filter === "all" ? true : filter === "fix" ? broken(i) : i.kind === filter))
-    .filter((i) => !text || i.name.toLowerCase().includes(text))
-    .sort((a, b) => a.name.localeCompare(b.name));
+    .filter((i) => !text || i.name.toLowerCase().includes(text));
+  const shownIds = new Set(shown.map((i) => i.id));
+  const heavy = (a: Item, b: Item) => facts.get(b.id)!.weight - facts.get(a.id)!.weight || a.name.localeCompare(b.name);
+  // A part goes under the item that uses it, when that item is in the list too.
+  const under = (i: Item, depth: number): { i: Item; depth: number }[] => [{ i, depth }, ...(depth < 6 ? shown.filter((p) => parentOf.get(p.id)?.id === i.id).sort(heavy).flatMap((p) => under(p, depth + 1)) : [])];
+  const tops = shown.filter((i) => !parentOf.has(i.id) || !shownIds.has(parentOf.get(i.id)!.id));
+  // An average month, by type: what counts is every item that is a line of its own and still running.
+  const flow = (kind: MoneyKind) => {
+    const live = view.items.filter((i) => i.kind === kind && !parts.has(i.id));
+    const ids = [...new Set(live.map((i) => (i.type_id && typeAt.has(i.type_id) ? i.type_id : null)))];
+    const segs = ids.map((id) => ({ id, ...(id ? typeAt.get(id)! : { name: "No type", tone: null }), sum: live.filter((i) => (i.type_id && typeAt.has(i.type_id) ? i.type_id : null) === id).reduce((n, i) => n + facts.get(i.id)!.weight, 0) })).filter((x) => x.sum > 0).sort((a, b) => b.sum - a.sum);
+    return { segs, total: segs.reduce((n, x) => n + x.sum, 0) };
+  };
+  const flows = { income: flow("income"), expense: flow("expense") };
+  const reach = Math.max(flows.income.total, flows.expense.total, 1);
+  const top = { income: Math.max(...view.items.filter((i) => i.kind === "income").map((i) => facts.get(i.id)!.weight), 1), expense: Math.max(...view.items.filter((i) => i.kind === "expense").map((i) => facts.get(i.id)!.weight), 1) };
+
+  const row = ({ i, depth }: { i: Item; depth: number }) => {
+    const f = facts.get(i.id)!;
+    const bank = i.bank_id ? bankAt.get(i.bank_id) : undefined;
+    const type = i.type_id ? typeAt.get(i.type_id) : undefined;
+    const changes = (i.amount_steps ?? []).length;
+    const parent = parentOf.get(i.id);
+    const taken = i.loan ? Number(i.loan.principal) : 0;
+    const repaid = f.owes !== null && taken > 0 ? Math.max(0, Math.min(1, 1 - f.owes / taken)) : 0;
+    const when = f.ended ? "ended" : f.later ? `from ${DateTime.fromISO(i.start_date).toFormat("d LLL yyyy")}` : FREQ_LABELS[i.freq].toLowerCase();
+    // The row in words, for a screen reader and for anyone who hovers.
+    const words = [
+      `${i.name}: ${i.kind === "income" ? "income" : "expense"}, ${i.formula ? `computed, ${thisMonth.has(i.id) ? inr(f.amount) : "nothing"} this month` : `${inr(f.amount)} ${when}`}`,
+      f.owes !== null ? (f.owes > 0 ? `loan, ${inr(f.owes)} owed` : "loan, paid off") : "",
+      changes ? `${changes} ${changes === 1 ? "change" : "changes"} of amount` : "",
+      parent ? `part of ${parent.name}` : "",
+      bank ? bank.name : "needs bank", type ? type.name : "needs type",
+    ].filter(Boolean).join(", ");
+    return (
+      <li key={i.id}>
+        <button className={`items-row ${f.ended || f.owes === 0 ? "is-ended" : ""} ${depth ? "is-part" : ""}`} style={depth ? { paddingLeft: 16 + depth * 28 } : undefined} aria-label={words} title={words} onClick={() => onOpen(i.id)}>
+          {type
+            ? <span className={`kit-mono act-${type.tone}`} aria-hidden>{type.name.trim()[0]?.toUpperCase()}</span>
+            : <span className="kit-mono is-none items-fix" aria-hidden>?</span>}
+          <span className="grow items-what">
+            <span className="items-name">{i.name}</span>
+            {/* How much of an average month this item is, against the largest of its kind. */}
+            <span className={`items-bar ${type ? `act-${type.tone}` : "is-none"} ${i.kind === "income" ? "is-in" : ""}`} aria-hidden><span style={{ width: `${f.weight > 0 ? Math.max(3, (f.weight / top[i.kind]) * 100) : 0}%` }} /></span>
+          </span>
+          <span className="money-amt">
+            <strong>{i.formula && !thisMonth.has(i.id) ? "—" : inr(f.amount)}</strong>
+            <span className="items-marks" aria-hidden>
+              {f.later && <span className="items-from">{DateTime.fromISO(i.start_date).toFormat("d LLL")}</span>}
+              {i.formula && <span className="items-mark is-sum">ƒ</span>}
+              {f.owes !== null && (
+                <svg className="items-ring" width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6" /><circle cx="8" cy="8" r="6" pathLength="100" strokeDasharray={`${repaid * 100} 100`} /></svg>
+              )}
+              {changes > 0 && <svg className="items-steps" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round"><path d="M3 20h6v-6h6V8h6" /></svg>}
+              <span className={`items-mark ${f.ended ? "is-off" : ""}`}>{FREQ_MARK[i.freq]}</span>
+              {bank ? <span className={`kit-mono is-mini act-${bank.tone}`}>{bank.name.trim()[0]?.toUpperCase()}</span> : <span className="kit-mono is-mini is-none items-fix">?</span>}
+            </span>
+          </span>
+        </button>
+      </li>
+    );
+  };
+  const section = (kind: MoneyKind) => {
+    const list = tops.filter((i) => i.kind === kind).sort(heavy).flatMap((i) => under(i, 0));
+    if (!list.length) return null;
+    return (
+      <section key={kind} className="items-kind">
+        <h2><span className={`kit-way ${kind === "income" ? "is-in" : "is-out"}`} aria-hidden><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={kind === "income" ? "M12 5v14M6 13l6 6 6-6" : "M12 19V5M6 11l6-6 6 6"} /></svg></span>{kind === "income" ? "Income" : "Expenses"}</h2>
+        <ul className="card list items-list">{list.map(row)}</ul>
+      </section>
+    );
+  };
 
   return (
     <>
@@ -450,6 +552,23 @@ function Items({ view, today, canEdit, onOpen, onNew }: { view: MoneyCtx; today:
         <h1>Items</h1>
         {canEdit && <button className="btn btn-primary" onClick={onNew}>＋ New item</button>}
       </div>
+      {view.items.length > 0 && (
+        <section className="card items-flow" aria-label="An average month">
+          {(["income", "expense"] as const).map((kind) => (
+            <div key={kind} className="sum-row">
+              <span>{kind === "income" ? "In" : "Out"}</span>
+              {/* One piece a type, as wide as its share of an average month. */}
+              <span className="flow-track" role="img" aria-label={`${kind === "income" ? "Income" : "Expenses"} in an average month: ${flows[kind].segs.map((x) => `${x.name} ${inr(Math.round(x.sum))}`).join(", ") || "none"}`}>
+                <span style={{ width: `${(flows[kind].total / reach) * 100}%` }}>
+                  {flows[kind].segs.map((x) => <i key={x.id ?? "none"} className={x.tone ? `act-${x.tone}` : "is-none"} style={{ flexGrow: x.sum }} title={`${x.name}: ${inr(Math.round(x.sum))}`} />)}
+                </span>
+              </span>
+              <strong>{inr(Math.round(flows[kind].total))}</strong>
+            </div>
+          ))}
+          <p className="ins-key"><span>an average month, a colour a type</span></p>
+        </section>
+      )}
       <div className="items-filters">
         <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name" aria-label="Search items by name" />
         <div className="chips" role="group" aria-label="Show">
@@ -458,42 +577,9 @@ function Items({ view, today, canEdit, onOpen, onNew }: { view: MoneyCtx; today:
           ))}
         </div>
       </div>
-      {rows.length === 0 ? (
-        <p className="empty card">{view.items.length === 0 ? "No items yet. An item is one income or expense, with how much and how often." : "Nothing matches."}</p>
-      ) : (
-        <ul className="card list items-list">
-          {rows.map((i) => {
-            const bank = i.bank_id ? bankAt.get(i.bank_id) : undefined;
-            const type = i.type_id ? typeName.get(i.type_id) : undefined;
-            const ended = !!i.end_date && i.end_date < today;
-            const later = i.start_date > today;
-            const amount = amountOn(i, later ? i.start_date : ended ? i.end_date! : today, (i.freq !== "once" && i.increase_id && pct.get(i.increase_id)) || 0);
-            const changes = (i.amount_steps ?? []).length;
-            const owes = i.loan ? loanNow(i, (i.increase_id && pct.get(i.increase_id)) || 0, today).balance : null;
-            return (
-              <li key={i.id}>
-                <button className={`items-row ${ended ? "is-ended" : ""}`} onClick={() => onOpen(i.id)}>
-                  {/* An arrow for which way the money moves: up and out, or down and in. */}
-                  <span className={`kit-way ${i.kind === "income" ? "is-in" : "is-out"}`} role="img" aria-label={i.kind === "income" ? "Income" : "Expense"}>
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d={i.kind === "income" ? "M12 5v14M6 13l6 6 6-6" : "M12 19V5M6 11l6-6 6 6"} /></svg>
-                  </span>
-                  <span className="grow items-what">
-                    <span className="items-name">{i.name}</span>
-                    <span className="task-due line-meta">
-                      {bank ? <><span className={`kit-mono is-mini act-${bank.tone}`} aria-hidden>{bank.name.trim()[0]?.toUpperCase()}</span>{bank.name}</> : <span className="items-fix">needs bank</span>}
-                      {type ? <span>{type}</span> : <span className="items-fix">needs type</span>}
-                    </span>
-                  </span>
-                  <span className="money-amt">
-                    <strong>{inr(amount)}</strong>
-                    <span>{owes !== null ? (owes > 0 ? `loan, ${inr(owes)} owed` : "loan, paid off") : ended ? "ended" : later ? `from ${DateTime.fromISO(i.start_date).toFormat("d LLL yyyy")}` : FREQ_LABELS[i.freq].toLowerCase()}{changes > 0 && !ended ? `, ${changes} ${changes === 1 ? "change" : "changes"}` : ""}</span>
-                  </span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      {shown.length === 0
+        ? <p className="empty card">{view.items.length === 0 ? "No items yet. An item is one income or expense, with how much and how often." : "Nothing matches."}</p>
+        : <>{section("income")}{section("expense")}</>}
     </>
   );
 }
@@ -712,7 +798,7 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
 
   // A line opened from the year is of the month clicked, not the month on show.
   const lineYm = (panel?.kind === "line" && panel.ym) || ym;
-  const panelLine = panel?.kind === "line" ? (lineYm === ym ? lines : monthLines(view.items, view.entries, view.increases, lineYm)).find((l) => l.item.id === panel.id) : undefined;
+  const panelLine = panel?.kind === "line" ? withParts(lineYm === ym ? lines : monthLines(view.items, view.entries, view.increases, lineYm)).find((l) => l.item.id === panel.id) : undefined;
   const panelItem = panel?.kind === "item" && panel.id ? view.items.find((i) => i.id === panel.id) : undefined;
   const close = () => setPanel(null);
   const openLine = (l: Line) => setPanel({ kind: "line", id: l.item.id });

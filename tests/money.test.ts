@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loanEmi, loanNow, loanSchedule, amountIn, amountOn, amountPeriods, bankPosition, byPerson, byType, forecast, linesDueOn, waitingOn, datesInMonth, monthLines, parseAmount, shiftMonth, totals, yearRows, type MoneyEntry, type MoneyItem } from "@/lib/money";
+import { evalFormula, formulaLoops, withParts, type FormulaToken, loanEmi, loanNow, loanSchedule, amountIn, amountOn, amountPeriods, bankPosition, byPerson, byType, forecast, linesDueOn, waitingOn, datesInMonth, monthLines, parseAmount, shiftMonth, totals, yearRows, type MoneyEntry, type MoneyItem } from "@/lib/money";
 
 const item = (over: Partial<MoneyItem>): MoneyItem => ({
   id: "i1", kind: "expense", name: "Wifi bill", amount: 1000, freq: "monthly", start_date: "2026-01-15", end_date: null,
@@ -259,5 +259,75 @@ describe("the year as a grid", () => {
     expect(rows[0].cells[2]?.skipped).toBe(true);
     expect(rows[0].total).toBe(11200);
     expect(rows[1].cells.map((c) => !!c)).toEqual([false, false, false, false, true, false, false, false, false, false, false, false]);
+  });
+});
+
+describe("a computed item", () => {
+  const n = (v: number): FormulaToken => ({ t: "num", v });
+  const o = (v: "+" | "-" | "*" | "/" | "(" | ")"): FormulaToken => ({ t: "op", v });
+  const it_ = (id: string): FormulaToken => ({ t: "item", id });
+  const worth = (id: string) => ({ a: 100, b: 40 })[id] ?? 0;
+
+  it("works a formula out in the usual order", () => {
+    expect(evalFormula([n(2), o("+"), n(3), o("*"), n(4)], worth).value).toBe(14);
+    expect(evalFormula([o("("), n(2), o("+"), n(3), o(")"), o("*"), n(4)], worth).value).toBe(20);
+    expect(evalFormula([it_("a"), o("-"), it_("b")], worth).value).toBe(60);
+    expect(evalFormula([it_("a"), o("*"), { t: "pct", v: 10 }], worth).value).toBe(10);
+    expect(evalFormula([o("-"), it_("b"), o("+"), it_("a")], worth).value).toBe(60);
+    expect(evalFormula([n(10), o("-"), n(4), o("-"), n(3)], worth).value).toBe(3);
+    expect(evalFormula([n(100), o("/"), n(8)], worth).value).toBe(12.5);
+  });
+
+  it("says when a formula is not a sum, or divides by zero", () => {
+    expect(evalFormula([], worth).error).toBe("syntax");
+    expect(evalFormula([n(2), o("+")], worth).error).toBe("syntax");
+    expect(evalFormula([n(2), n(3)], worth).error).toBe("syntax");
+    expect(evalFormula([o("("), n(2)], worth).error).toBe("syntax");
+    expect(evalFormula([n(2), o("/"), it_("none")], worth)).toEqual({ value: 0, error: "zero" });
+  });
+
+  const salary = item({ id: "sal", kind: "income", name: "Salary", amount: 100000, start_date: "2026-01-01" });
+  const tax = item({ id: "tax", kind: "expense", name: "Tax", amount: 10000, start_date: "2026-01-01" });
+  const bonus = item({ id: "bon", kind: "income", name: "Bonus", amount: 50000, freq: "yearly", start_date: "2026-03-01" });
+  const net = item({ id: "net", kind: "income", name: "Take home", amount: 0, start_date: "2026-01-01", formula: [it_("sal"), o("+"), it_("bon"), o("-"), it_("tax")] });
+  const all = [salary, tax, bonus, net];
+
+  it("takes its budget from its parts, which are no longer lines of their own", () => {
+    const lines = monthLines(all, [], [], "2026-02");
+    expect(lines.map((l) => l.item.id)).toEqual(["net"]);
+    expect(lines[0]).toMatchObject({ rule: 90000, budget: 90000, actual: null });
+    expect(lines[0].parts!.map((l) => l.item.id).sort()).toEqual(["sal", "tax"]); // the bonus is not due: it counts as 0
+    expect(monthLines(all, [], [], "2026-03")[0].budget).toBe(140000);
+    expect(totals(lines, "income").budget).toBe(90000);
+    expect(totals(lines, "expense").budget).toBe(0);
+    expect(withParts(lines).map((l) => l.item.id).sort()).toEqual(["net", "sal", "tax"]);
+  });
+
+  it("takes its actual from its parts' actuals, unless one is typed for it", () => {
+    const e = (item_id: string, over: Partial<MoneyEntry>): MoneyEntry => ({ item_id, month: "2026-02-01", budget: null, actual: null, paid_at: null, skipped: false, ...over });
+    expect(monthLines(all, [e("sal", { actual: 98000 })], [], "2026-02")[0]).toMatchObject({ actual: 88000, derived: true, budget: 90000 });
+    expect(monthLines(all, [e("sal", { actual: 98000 }), e("net", { actual: 87500 })], [], "2026-02")[0]).toMatchObject({ actual: 87500, derived: false });
+    expect(monthLines(all, [e("tax", { skipped: true })], [], "2026-02")[0].budget).toBe(100000);
+    expect(monthLines(all, [e("sal", { budget: 80000 })], [], "2026-02")[0].budget).toBe(70000);
+  });
+
+  it("nests, and shows ₹0 with a reason when it cannot be worked out", () => {
+    const half = item({ id: "half", name: "Half", amount: 0, start_date: "2026-01-01", formula: [it_("net"), o("*"), { t: "pct", v: 50 }] });
+    const nested = monthLines([...all, half], [], [], "2026-02");
+    expect(nested.map((l) => l.item.id)).toEqual(["half"]);
+    expect(nested[0].budget).toBe(45000);
+    expect(nested[0].parts![0].parts).toHaveLength(2);
+    const under = item({ id: "u", name: "Under", amount: 0, start_date: "2026-01-01", formula: [it_("tax"), o("-"), it_("sal")] });
+    expect(monthLines([salary, tax, under], [], [], "2026-02")[0]).toMatchObject({ budget: 0, warn: "Its formula comes to less than zero." });
+    const gone = item({ id: "g", name: "Gone", amount: 0, start_date: "2026-01-01", formula: [it_("tax"), o("+"), it_("nobody")] });
+    expect(monthLines([tax, gone], [], [], "2026-02")[0]).toMatchObject({ budget: 10000, warn: "Its formula uses an item that is gone." });
+    const split = item({ id: "s", name: "Split", amount: 0, start_date: "2026-01-01", formula: [it_("tax"), o("/"), it_("bon")] });
+    expect(monthLines([tax, bonus, split], [], [], "2026-02")[0]).toMatchObject({ budget: 0, warn: "Its formula divides by zero." });
+  });
+
+  it("refuses a formula that comes back to itself", () => {
+    expect(formulaLoops("sal", [it_("net")], all)).toBe(true);
+    expect(formulaLoops("net", [it_("net")], all)).toBe(true);
+    expect(formulaLoops("new", [it_("net"), o("+"), it_("sal")], all)).toBe(false);
   });
 });

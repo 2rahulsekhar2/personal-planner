@@ -20,6 +20,8 @@ export interface MoneyItem {
   amount_steps?: AmountStep[] | null;
   // Set when the item is a loan: `amount` is then the EMI, paid every month. Absent until 0021_money_loans.sql has been run.
   loan?: Loan | null;
+  // Set when the item is computed from other items; `amount` is then unused. Absent until 0022_money_computed.sql has been run.
+  formula?: FormulaToken[] | null;
   freq: MoneyFreq;
   start_date: string; // yyyy-MM-dd; the date itself when freq is "once"
   end_date: string | null;
@@ -35,6 +37,9 @@ export interface AmountStep {
   from: string; // yyyy-MM-dd
   amount: number;
 }
+
+/** One piece of a formula: another item's month, a number, a percentage (10% is 0.1), or an operator or bracket. */
+export type FormulaToken = { t: "item"; id: string } | { t: "num"; v: number } | { t: "pct"; v: number } | { t: "op"; v: "+" | "-" | "*" | "/" | "(" | ")" };
 
 /** What was borrowed. The item it sits on is the monthly payment. */
 export interface Loan {
@@ -203,23 +208,122 @@ export interface Line {
   actual: number | null;
   paid: boolean;
   skipped: boolean;
+  // A computed item only: the lines of the items its formula uses that fall in this month.
+  parts?: Line[];
+  derived?: boolean; // `actual` was worked out from the parts, not typed for this item
+  warn?: string; // why the formula comes to ₹0
 }
 
-/** Every item that falls due in the month, earliest first. Skipped lines are included, so they can be put back. */
+/**
+ * Works a formula out, with `valueOf` giving each item's worth. The usual order: brackets, then × and ÷, then + and −.
+ * `error`: "syntax" when the pieces do not make a sum, "zero" when it divides by nothing.
+ */
+export function evalFormula(tokens: FormulaToken[], valueOf: (id: string) => number): { value: number; error?: "syntax" | "zero" } {
+  let at = 0;
+  let zero = false;
+  const op = (v: string) => { const t = tokens[at]; return t?.t === "op" && t.v === v; };
+  const factor = (): number => {
+    const t = tokens[at++];
+    if (!t) throw 0;
+    if (t.t === "num") return Number(t.v);
+    if (t.t === "pct") return Number(t.v) / 100;
+    if (t.t === "item") return valueOf(t.id);
+    if (t.v === "-") return -factor();
+    if (t.v !== "(") throw 0;
+    const inner = sum();
+    if (!op(")")) throw 0;
+    at++;
+    return inner;
+  };
+  const product = (): number => {
+    let n = factor();
+    while (op("*") || op("/")) {
+      const divide = op("/");
+      at++;
+      const by = factor();
+      if (divide && by === 0) zero = true;
+      n = divide ? (by === 0 ? 0 : n / by) : n * by;
+    }
+    return n;
+  };
+  const sum = (): number => {
+    let n = product();
+    while (op("+") || op("-")) {
+      const minus = op("-");
+      at++;
+      n = minus ? n - product() : n + product();
+    }
+    return n;
+  };
+  try {
+    const value = sum();
+    if (at !== tokens.length || !Number.isFinite(value)) return { value: 0, error: "syntax" };
+    return zero ? { value: 0, error: "zero" } : { value: round2(value) };
+  } catch {
+    return { value: 0, error: "syntax" };
+  }
+}
+
+/** The ids of the items a formula uses. */
+export const formulaItems = (tokens: FormulaToken[] | null | undefined) => (tokens ?? []).flatMap((t) => (t.t === "item" ? [t.id] : []));
+/** The ids of every item used in some other item's formula: parts, which are not lines of their own. */
+export const partIds = (items: Pick<MoneyItem, "formula">[]) => new Set(items.flatMap((i) => formulaItems(i.formula)));
+/** True when `id`'s formula would, through the items it uses, come back to `id`. */
+export function formulaLoops(id: string, tokens: FormulaToken[], items: Pick<MoneyItem, "id" | "formula">[]): boolean {
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const seen = new Set<string>();
+  const reach = (ids: string[]): boolean => ids.some((x) => x === id || (!seen.has(x) && (seen.add(x), reach(formulaItems(byId.get(x)?.formula)))));
+  return reach(formulaItems(tokens));
+}
+/** A line with the lines under it, and those under them. */
+export const withParts = (lines: Line[]): Line[] => lines.flatMap((l) => [l, ...withParts(l.parts ?? [])]);
+
+/**
+ * Every line of the month, earliest first. Skipped lines are included, so they can be put back.
+ * An item used in another item's formula is not a line here: it sits under that item, in `parts`, and counts only through it.
+ */
 export function monthLines(items: MoneyItem[], entries: MoneyEntry[], increases: Increase[], ym: string): Line[] {
   const pct = new Map(increases.map((i) => [i.id, Number(i.percent)]));
   const byItem = new Map(entries.filter((e) => e.month.slice(0, 7) === ym).map((e) => [e.item_id, e]));
-  return items
-    .map((item): Line | null => {
-      const percent = (item.freq !== "once" && item.increase_id && pct.get(item.increase_id)) || 0;
-      // A loan is due while something is owed, and its last payment is what remains.
-      const due = item.loan ? loanSchedule(item, percent, ym).find((r) => r.date.slice(0, 7) === ym) : null;
-      const dates = item.loan ? (due ? [due.date] : []) : datesInMonth(item, ym);
-      if (!dates.length) return null;
+  const byId = new Map(items.map((i) => [i.id, i]));
+  const made = new Map<string, Line | null>();
+  // An item's line this month, or null when it is not due. `above`: the computed items being worked out, to catch a loop.
+  const lineOf = (item: MoneyItem, above: string[]): Line | null => {
+    if (made.has(item.id)) return made.get(item.id)!;
+    const percent = (item.freq !== "once" && item.increase_id && pct.get(item.increase_id)) || 0;
+    // A loan is due while something is owed, and its last payment is what remains.
+    const due = item.loan && !item.formula ? loanSchedule(item, percent, ym).find((r) => r.date.slice(0, 7) === ym) : null;
+    const dates = item.loan && !item.formula ? (due ? [due.date] : []) : datesInMonth(item, ym);
+    const e = byItem.get(item.id);
+    let line: Line | null = null;
+    if (dates.length && !item.formula) {
       const rule = due ? due.pay : round2(dates.reduce((sum, d) => sum + amountOn(item, d, percent), 0));
-      const e = byItem.get(item.id);
-      return { item, dates, rule, budget: e?.budget != null ? Number(e.budget) : rule, actual: e?.actual != null ? Number(e.actual) : null, paid: !!e?.paid_at, skipped: !!e?.skipped };
-    })
+      line = { item, dates, rule, budget: e?.budget != null ? Number(e.budget) : rule, actual: e?.actual != null ? Number(e.actual) : null, paid: !!e?.paid_at, skipped: !!e?.skipped };
+    } else if (dates.length) {
+      // Computed: the formula over its parts' budgets, and again over what they really came to once any of them is known.
+      const used = [...new Set(formulaItems(item.formula))];
+      const loop = above.includes(item.id);
+      const found = loop ? [] : used.map((id) => { const part = byId.get(id); return part ? lineOf(part, [...above, item.id]) : null; });
+      const parts = found.filter((l): l is Line => !!l);
+      const live = new Map(parts.filter((l) => !l.skipped).map((l) => [l.item.id, l]));
+      const plan = evalFormula(item.formula!, (id) => live.get(id)?.budget ?? 0);
+      const real = evalFormula(item.formula!, (id) => { const l = live.get(id); return l ? expected(l) : 0; });
+      const warn = loop ? "Its formula uses itself." : plan.error === "syntax" ? "Its formula is not complete." : plan.error === "zero" ? "Its formula divides by zero." : used.some((id) => !byId.has(id)) ? "Its formula uses an item that is gone." : plan.value < 0 ? "Its formula comes to less than zero." : undefined;
+      const rule = loop || plan.error ? 0 : Math.max(0, plan.value);
+      const known = [...live.values()].some((l) => l.actual !== null);
+      const typed = e?.actual != null ? Number(e.actual) : null;
+      line = {
+        item, dates, rule, budget: e?.budget != null ? Number(e.budget) : rule, paid: !!e?.paid_at, skipped: !!e?.skipped, parts, warn,
+        actual: typed ?? (known && !loop && !real.error ? Math.max(0, real.value) : null), derived: typed === null && known,
+      };
+    }
+    if (!above.includes(item.id)) made.set(item.id, line); // a line cut short by a loop is not the item's real one
+    return line;
+  };
+  const parts = partIds(items);
+  return items
+    .filter((i) => !parts.has(i.id))
+    .map((i) => lineOf(i, []))
     .filter((l): l is Line => !!l)
     .sort((a, b) => a.dates[0].localeCompare(b.dates[0]) || a.item.name.localeCompare(b.item.name));
 }
