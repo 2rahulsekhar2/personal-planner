@@ -14,6 +14,7 @@ const EMPTY = {
   months: [] as PlannedMark[], proposals: [] as Proposal[], approvals: [] as { proposal_id: string; user_id: string }[],
   family: [] as string[], // circles whose family plan is on
   shared: false, // true once the database has shared budgets (0017_money_shared.sql)
+  steps: false, // true once an item can change its amount from a date (0020_money_amount_steps.sql)
 };
 
 /** Everything the Money side needs: whether it is on, the mode last used, and every budget this person can read. */
@@ -50,27 +51,35 @@ export function useMoney(ctx: PlannerCtx) {
         if (page.data.length < 1000) return { data: rows, error: null };
       }
     };
+    // Newest shape first; without 0020 there is no amount_steps column, so ask again without it.
+    const loadItems = (steps: boolean) => supabase.from("money_items").select(`id, kind, name, amount, freq, start_date, end_date, bank_id, type_id, increase_id, person_ids, notes${c}${steps ? ", amount_steps" : ""}`).order("name");
     // shortcut: loads every item and month entry at once, fine for one household; load entries by month range if this grows past a few thousand rows
     const [banks, types, increases, people, items, entries, months, proposals, approvals] = await Promise.all([
       supabase.from("money_banks").select(`id, user_id, name, balance, balance_at, archived_at${c}`).order("name"),
       supabase.from("money_types").select(`id, name, kind, archived_at${c}`).order("name"),
       supabase.from("money_increases").select(`id, name, percent, archived_at${c}`).order("percent"),
       supabase.from("money_people").select(`id, name, relationship, archived_at${shared ? ", circle_id, member_id" : ""}`).order("created_at"),
-      supabase.from("money_items").select(`id, kind, name, amount, freq, start_date, end_date, bank_id, type_id, increase_id, person_ids, notes${c}`).order("name"),
+      loadItems(true),
       allEntries(),
       supabase.from("money_months").select(`month, user_id${c}`),
       shared ? supabase.from("money_proposals").select("id, circle_id, item_id, action, payload, created_by, status, reason").in("status", ["pending", "rejected"]).order("created_at") : { data: [], error: null },
       shared ? supabase.from("money_approvals").select("proposal_id, user_id") : { data: [], error: null },
     ]);
-    const err = banks.error || types.error || increases.error || people.error || items.error || entries.error || months.error || proposals.error || approvals.error;
+    let steps = !items.error;
+    let itemRows = items;
+    if (items.error) {
+      itemRows = await loadItems(false);
+      steps = false;
+    }
+    const err = banks.error || types.error || increases.error || people.error || itemRows.error || entries.error || months.error || proposals.error || approvals.error;
     setError(err?.message ?? null);
     if (!err) {
       setData({
         banks: banks.data as unknown as Bank[], types: types.data as unknown as MoneyType[], increases: increases.data as unknown as Increase[],
-        people: people.data as unknown as Person[], items: items.data as unknown as MoneyItem[], entries: entries.data as MoneyEntry[],
+        people: people.data as unknown as Person[], items: itemRows.data as unknown as MoneyItem[], entries: entries.data as MoneyEntry[],
         months: (months.data as unknown as PlannedMark[]).map((m) => ({ month: m.month.slice(0, 7), circle_id: m.circle_id ?? null, user_id: m.user_id })),
         proposals: proposals.data as Proposal[], approvals: approvals.data as { proposal_id: string; user_id: string }[],
-        family: active.flatMap((s) => (s.circle_id ? [s.circle_id] : [])), shared,
+        family: active.flatMap((s) => (s.circle_id ? [s.circle_id] : [])), shared, steps,
       });
     }
     setStatus("on");

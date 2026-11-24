@@ -631,6 +631,15 @@ textarea { resize: vertical; }
 .chips-xs { gap: 4px; margin-top: 6px; }
 .chips-xs .chip { min-height: 26px; padding: 0 9px; gap: 5px; font-size: 12px; }
 .chips-xs .swatch { width: 8px; height: 8px; }
+/* An item's amount over time: a row for each stretch, the figure first, then when it holds. A dot marks the
+   one in force today. */
+.amt-steps { display: flex; flex-direction: column; gap: 8px; }
+.amt-step { position: relative; display: grid; grid-template-columns: minmax(96px, 132px) 1fr auto; align-items: center; gap: 10px; }
+.amt-step > input { font-variant-numeric: tabular-nums; font-weight: 600; }
+.amt-when { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; font-size: 13px; color: var(--ink-2); min-width: 0; }
+.amt-step.is-now::before { content: ""; position: absolute; left: -11px; top: 50%; translate: 0 -50%; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.amt-step .icon-btn { width: 30px; height: 30px; font-size: 13px; }
+.amt-add { align-self: flex-start; margin-top: 8px; }
 /* A section's name with its picture. */
 .named { display: inline-flex; align-items: center; gap: 6px; }
 .named svg { flex-shrink: 0; }

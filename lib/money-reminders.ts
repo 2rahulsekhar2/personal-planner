@@ -64,7 +64,8 @@ export async function planBillReminders(admin: SupabaseClient, now = DateTime.no
   // shortcut: reads every household's budget on each run, fine for a few families; move the due-date maths into SQL or shard by user if this grows
   const [subs, items, entries, increases, banks, members, profiles] = await Promise.all([
     need(admin.from("subscriptions").select("user_id, circle_id").eq("product", "money").eq("status", "active")),
-    need(admin.from("money_items").select("id, user_id, circle_id, kind, name, amount, freq, start_date, end_date, bank_id, type_id, increase_id, person_ids, notes")),
+    // Whole rows, so a dated change of amount (0020) is used where the column exists and no harm is done where it does not.
+    need(admin.from("money_items").select("*")),
     need(admin.from("money_entries").select("item_id, month, budget, actual, paid_at, skipped").gte("month", since)),
     need(admin.from("money_increases").select("id, name, percent, archived_at")),
     need(admin.from("money_banks").select("id, name")),

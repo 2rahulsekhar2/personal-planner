@@ -15,7 +15,9 @@ export interface MoneyItem {
   circle_id?: string | null;
   kind: MoneyKind;
   name: string;
-  amount: number; // the budget for one occurrence
+  amount: number; // the budget for one occurrence, from the first date on
+  // Later changes of that amount, each from a date on. Absent until 0020_money_amount_steps.sql has been run.
+  amount_steps?: AmountStep[] | null;
   freq: MoneyFreq;
   start_date: string; // yyyy-MM-dd; the date itself when freq is "once"
   end_date: string | null;
@@ -24,6 +26,12 @@ export interface MoneyItem {
   increase_id: string | null;
   person_ids: string[];
   notes: string | null;
+}
+
+/** A change of an item's amount from a date on. It holds until the next change, or the item's last date. */
+export interface AmountStep {
+  from: string; // yyyy-MM-dd
+  amount: number;
 }
 
 /** One month of one item, stored only when that month was changed, skipped or paid. `month` is yyyy-MM-01. */
@@ -90,10 +98,30 @@ export function datesInMonth(item: Pick<MoneyItem, "freq" | "start_date" | "end_
   return out;
 }
 
-/** One occurrence's budget on a date: the item's amount, raised by `percent` once for each full year since it started. */
-export function amountOn(item: Pick<MoneyItem, "amount" | "start_date">, date: string, percent: number): number {
-  const years = Math.max(0, Math.floor(day(date).diff(day(item.start_date), "years").years));
-  return round2(item.amount * (1 + percent / 100) ** years);
+type Priced = Pick<MoneyItem, "amount" | "start_date"> & { amount_steps?: AmountStep[] | null };
+
+/** The amount in force on a date, and the day it took effect: the item's own amount, or the latest change dated on or before then. */
+export function amountIn(item: Priced, date: string): { amount: number; since: string } {
+  let now = { amount: Number(item.amount), since: item.start_date };
+  for (const s of item.amount_steps ?? []) if (s.from <= date && s.from > now.since) now = { amount: Number(s.amount), since: s.from };
+  return now;
+}
+
+/**
+ * One occurrence's budget on a date: the amount in force then, raised by `percent` once for each full year since
+ * that amount took effect. A change of amount starts the count again: the new figure is taken as already up to date.
+ */
+export function amountOn(item: Priced, date: string, percent: number): number {
+  const { amount, since } = amountIn(item, date);
+  const years = Math.max(0, Math.floor(day(date).diff(day(since), "years").years));
+  return round2(amount * (1 + percent / 100) ** years);
+}
+
+/** An item's amounts as stretches of time, earliest first: each runs to the day before the next, the last to the item's end (null: no end). */
+export function amountPeriods(item: Priced & Pick<MoneyItem, "end_date">): { from: string; to: string | null; amount: number }[] {
+  const steps = [...(item.amount_steps ?? [])].filter((s) => s.from > item.start_date).sort((a, b) => a.from.localeCompare(b.from));
+  const all = [{ from: item.start_date, amount: Number(item.amount) }, ...steps.map((s) => ({ from: s.from, amount: Number(s.amount) }))];
+  return all.map((p, n) => ({ ...p, to: all[n + 1] ? day(all[n + 1].from).minus({ days: 1 }).toISODate()! : item.end_date }));
 }
 
 /** An item in one month: what the rule says, and what was changed or recorded for that month. */
