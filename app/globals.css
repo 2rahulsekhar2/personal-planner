@@ -919,6 +919,17 @@ button.yr-month:hover { background: var(--surface-2); color: var(--ink); }
 .task-row.is-done .line-date { opacity: .55; }
 .line-meta { display: flex; align-items: center; gap: 6px; }
 .kit-mono.is-mini { width: 16px; height: 16px; border-radius: 5px; font-size: 9px; }
+/* Last month's open lines: a card that stays until each is answered. */
+.carry { display: grid; gap: 6px; border-color: color-mix(in srgb, var(--warn) 40%, transparent); background: var(--warn-soft); }
+.carry h2 { font-size: 15px; color: var(--warn); }
+.carry p { margin: 0; font-size: 13px; }
+.carry li { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 12px; padding: 8px 0; border-top: 1px solid color-mix(in srgb, var(--warn) 20%, transparent); }
+.carry-name { flex: 1 1 140px; min-width: 0; overflow-wrap: anywhere; }
+.carry li strong { font-variant-numeric: tabular-nums; }
+.carry-acts { display: flex; flex-wrap: wrap; gap: 6px; }
+.carry-wait { font-size: 13px; }
+/* With the card above it the year cannot keep to one screen: the page scrolls and the grid runs its full height. */
+.page:has(.carry) .yr { max-height: none; }
 .money-plan { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin: 0; }
 .money-lines.card { padding: 4px 16px; }
 .page .empty.card { margin: 0; }

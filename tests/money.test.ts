@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { evalFormula, formulaLoops, withParts, type FormulaToken, loanEmi, loanNow, loanSchedule, amountIn, amountOn, amountPeriods, bankPosition, byPerson, byType, forecast, linesDueOn, waitingOn, datesInMonth, monthLines, parseAmount, shiftMonth, totals, yearRows, type MoneyEntry, type MoneyItem } from "@/lib/money";
+import { carried, carryOver, evalFormula, formulaLoops, withParts, type FormulaToken, loanEmi, loanNow, loanSchedule, amountIn, amountOn, amountPeriods, bankPosition, byPerson, byType, forecast, linesDueOn, waitingOn, datesInMonth, monthLines, parseAmount, shiftMonth, totals, yearRows, type MoneyEntry, type MoneyItem } from "@/lib/money";
 
 const item = (over: Partial<MoneyItem>): MoneyItem => ({
   id: "i1", kind: "expense", name: "Wifi bill", amount: 1000, freq: "monthly", start_date: "2026-01-15", end_date: null,
@@ -329,5 +329,24 @@ describe("a computed item", () => {
     expect(formulaLoops("sal", [it_("net")], all)).toBe(true);
     expect(formulaLoops("net", [it_("net")], all)).toBe(true);
     expect(formulaLoops("new", [it_("net"), o("+"), it_("sal")], all)).toBe(false);
+  });
+});
+
+describe("what a month leaves open", () => {
+  it("asks about last month's lines that were neither settled nor skipped, and carries a repeating one as a one-time item", () => {
+    const rent = item({ id: "rent", name: "Rent" });
+    const gym = item({ id: "gym", name: "Gym" });
+    const net = item({ id: "net", name: "Internet" });
+    const gift = item({ id: "gift", name: "Gift", freq: "once", start_date: "2026-10-20" });
+    const entries: MoneyEntry[] = [
+      { item_id: "rent", month: "2026-10-01", budget: null, actual: 1200, paid_at: null, skipped: false },
+      { item_id: "gym", month: "2026-10-01", budget: null, actual: null, paid_at: "2026-10-15T00:00:00Z", skipped: false },
+      { item_id: "net", month: "2026-10-01", budget: null, actual: null, paid_at: null, skipped: true },
+      { item_id: "gym", month: "2026-09-01", budget: null, actual: null, paid_at: null, skipped: false }, // older months are not asked about
+    ];
+    const open = carryOver([rent, gym, net, gift], entries, [], "2026-11");
+    expect(open.map((l) => l.item.id).sort()).toEqual(["gift", "rent"]);
+    const rentLine = open.find((l) => l.item.id === "rent")!;
+    expect(carried(rentLine, "2026-10", "2026-11-03")).toMatchObject({ name: "Rent (October)", amount: 1200, freq: "once", start_date: "2026-11-03", end_date: null, increase_id: null });
   });
 });

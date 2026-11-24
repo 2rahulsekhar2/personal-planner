@@ -7,7 +7,7 @@ import Panel from "./Panel";
 import Select from "./Select";
 import MoneySetup, { TONES } from "./MoneySetup";
 import { MoneyItemForm, MoneyLineForm } from "./MoneyItemForm";
-import { amountOn, loanNow, bankPosition, byPerson, byType, expected, forecast, formulaItems, FREQ_LABELS, inr, monthLabel, monthLines, partIds, shiftMonth, totals, waitingOn, withParts, yearRows, type Line, type MoneyFreq, type MoneyKind, type Proposal } from "@/lib/money";
+import { amountOn, carried, carryOver, loanNow, bankPosition, byPerson, byType, expected, forecast, formulaItems, FREQ_LABELS, inr, monthLabel, monthLines, partIds, shiftMonth, totals, waitingOn, withParts, yearRows, type Line, type MoneyFreq, type MoneyItem, type MoneyKind, type Proposal } from "@/lib/money";
 import { canAdd, isCurrent, type Circle } from "@/lib/circles";
 import { todayISO } from "@/lib/time";
 
@@ -669,6 +669,39 @@ function Items({ view, today, canEdit, onOpen, onNew }: { view: MoneyCtx; today:
 
 const nameOf = (c: Circle, userId: string, me: string | null) => (userId === me ? "You" : c.circle_members.find((m) => m.user_id === userId)?.email.split("@")[0] ?? "A member");
 
+/**
+ * What last month left open, asked about at the top of Money until each one is answered: it was paid or received,
+ * it moves into this month, or it is skipped. There is no way to put the card aside.
+ */
+function CarryOver({ lines, from, into, waiting, onPaid, onMove, onSkip }: {
+  lines: Line[]; from: string; into: string; waiting: (l: Line) => boolean;
+  onPaid: (l: Line) => Promise<unknown>; onMove: (l: Line) => Promise<unknown>; onSkip: (l: Line) => Promise<unknown>;
+}) {
+  const [busy, setBusy] = useState<string | null>(null);
+  const run = async (l: Line, fn: (l: Line) => Promise<unknown>) => { setBusy(l.item.id); await fn(l); setBusy(null); };
+  return (
+    <section className="card carry" aria-labelledby="carry-title">
+      <h2 id="carry-title">Left open from {from}</h2>
+      <p className="muted">Answer each one: it is done, it moves to {into}, or it is skipped.</p>
+      <ul className="list">
+        {lines.map((l) => (
+          <li key={l.item.id}>
+            <span className="carry-name">{l.item.name}</span>
+            <strong>{inr(expected(l))}</strong>
+            {waiting(l) ? <span className="muted carry-wait">Move to {into} is waiting for approval</span> : (
+              <span className="carry-acts">
+                <button className="btn btn-sm btn-primary" disabled={busy !== null} onClick={() => run(l, onPaid)}>{l.item.kind === "expense" ? "Paid" : "Received"}</button>
+                <button className="btn btn-sm" disabled={busy !== null} onClick={() => run(l, onMove)}>Move to {into}</button>
+                <button className="btn btn-sm btn-ghost" disabled={busy !== null} onClick={() => run(l, onSkip)}>Skip</button>
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 /** A circle's open requests: each waits for every other member to approve, or has been rejected with a reason. */
 function Requests({ ctx, money, scope, canEdit, onAgain }: { ctx: PlannerCtx; money: MoneyCtx; scope: Circle; canEdit: boolean; onAgain: (p: Proposal) => void }) {
   const [rejecting, setRejecting] = useState<string | null>(null);
@@ -868,6 +901,34 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
     return write(!money.shared ? mine : sid ? mine.eq("circle_id", sid) : mine.is("circle_id", null), `${monthLabel(ym)} reopened`);
   };
 
+  // Last month's open lines, asked of those who can change the budget in view.
+  const lastYm = shiftMonth(nowYm, -1);
+  const lastName = monthLabel(lastYm).split(" ")[0];
+  const nowName = monthLabel(nowYm).split(" ")[0];
+  const open = canEdit ? carryOver(view.items, view.entries, view.increases, nowYm) : [];
+  const settleLast = (l: Line, fields: { paid_at: string } | { skipped: true }, done: string) => write(supabase.from("money_entries").upsert({ item_id: l.item.id, month: `${lastYm}-01`, ...fields }), done);
+  // A one-time item moves by its date. A repeating one keeps its rhythm: last month is skipped, and a one-time item carries what was due.
+  // In a shared budget the new date or the new item is a request like any other; the skip is not.
+  const moveOn = async (l: Line) => {
+    const today = todayISO(ctx.tz);
+    const once = l.item.freq === "once";
+    const row: Partial<MoneyItem> = { ...l.item, start_date: today };
+    delete row.id;
+    delete row.circle_id;
+    const next = once ? row : carried(l, lastYm, today);
+    const res = scope
+      ? await supabase.rpc("money_propose", { p_circle: scope.id, p_action: once ? "change" : "add", p_item: once ? l.item.id : null, p_payload: next })
+      : once ? await supabase.from("money_items").update({ start_date: today }).eq("id", l.item.id) : await supabase.from("money_items").insert(next);
+    if (res.error) return ctx.toast("error", `Couldn’t move it: ${res.error.message}`);
+    if (!once) {
+      const skip = await supabase.from("money_entries").upsert({ item_id: l.item.id, month: `${lastYm}-01`, skipped: true });
+      if (skip.error) return ctx.toast("error", `Couldn’t skip ${lastName}: ${skip.error.message}`);
+    }
+    await money.reload();
+    ctx.toast("ok", res.data === "pending" ? `Sent to ${scope!.name} for approval` : `${l.item.name} moved to ${nowName}`);
+  };
+  const moveAsked = (l: Line) => money.proposals.some((p) => p.status === "pending" && p.action === "change" && p.item_id === l.item.id && p.payload.start_date?.slice(0, 7) === nowYm);
+
   const monthBar = (
     <div className="toolbar">
       <div className="toolbar-group">
@@ -916,6 +977,12 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
             {tab !== "year" && tabStrip}
             {tab !== "year" && scopeBar}
             {money.error && <div className="alert alert-error" role="alert">Couldn’t load your budget: {money.error}. <button className="link" onClick={() => money.reload()}>Retry</button></div>}
+
+            {open.length > 0 && (
+              <CarryOver lines={open} from={lastName} into={nowName} waiting={moveAsked}
+                onPaid={(l) => settleLast(l, { paid_at: new Date().toISOString() }, `${l.item.name} ${l.item.kind === "expense" ? "paid" : "received"}`)}
+                onMove={moveOn} onSkip={(l) => settleLast(l, { skipped: true }, `${l.item.name} skipped for ${lastName}`)} />
+            )}
 
             {tab === "month" && (
               <>
