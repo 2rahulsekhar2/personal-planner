@@ -18,6 +18,8 @@ export interface MoneyItem {
   amount: number; // the budget for one occurrence, from the first date on
   // Later changes of that amount, each from a date on. Absent until 0020_money_amount_steps.sql has been run.
   amount_steps?: AmountStep[] | null;
+  // Set when the item is a loan: `amount` is then the EMI, paid every month. Absent until 0021_money_loans.sql has been run.
+  loan?: Loan | null;
   freq: MoneyFreq;
   start_date: string; // yyyy-MM-dd; the date itself when freq is "once"
   end_date: string | null;
@@ -32,6 +34,17 @@ export interface MoneyItem {
 export interface AmountStep {
   from: string; // yyyy-MM-dd
   amount: number;
+}
+
+/** What was borrowed. The item it sits on is the monthly payment. */
+export interface Loan {
+  principal: number; // the amount taken
+  rate: number; // percent a year
+  kind: "reducing" | "flat"; // interest on what is still owed, or on the amount taken every month
+  months: number; // the tenure the EMI is worked out for
+  // Optional: what the lender says was owed on a date. The sums carry on from there.
+  balance?: number | null;
+  balance_on?: string | null;
 }
 
 /** One month of one item, stored only when that month was changed, skipped or paid. `month` is yyyy-MM-01. */
@@ -124,6 +137,63 @@ export function amountPeriods(item: Priced & Pick<MoneyItem, "end_date">): { fro
   return all.map((p, n) => ({ ...p, to: all[n + 1] ? day(all[n + 1].from).minus({ days: 1 }).toISODate()! : item.end_date }));
 }
 
+/** The usual EMI for a loan, to the next whole rupee. Flat: an equal share of the amount taken, plus a month's interest on all of it. */
+export function loanEmi(loan: Pick<Loan, "principal" | "rate" | "kind" | "months">): number {
+  const { principal: p, months: n } = loan;
+  const r = loan.rate / 1200;
+  if (!(p > 0) || !(n > 0)) return 0;
+  if (loan.kind === "flat" || r === 0) return Math.ceil(p / n + p * r);
+  const grow = (1 + r) ** n;
+  return Math.ceil((p * r * grow) / (grow - 1));
+}
+
+export interface LoanRow { date: string; pay: number; interest: number; balance: number } // balance: still owed after this payment
+type Lent = Priced & { loan?: Loan | null };
+const LOAN_MAX = 1200; // months: a loan whose EMI never covers its interest stops being worked out here
+
+/**
+ * A loan's payments month by month, by the calendar: each EMI (with its yearly increase and dated changes) first pays
+ * the month's interest, and the rest comes off what is owed. The last payment is whatever remains, and then it stops.
+ * Where the lender's own balance on a date is given, what is owed is reset to it from the next payment on.
+ * `untilYm` stops the working early, for when only the months up to one are wanted.
+ */
+export function loanSchedule(item: Lent, percent = 0, untilYm?: string): LoanRow[] {
+  const loan = item.loan;
+  if (!loan) return [];
+  const fix = loan.balance != null && loan.balance_on ? { on: loan.balance_on, balance: Number(loan.balance) } : null;
+  const rows: LoanRow[] = [];
+  let balance = Number(loan.principal);
+  let fixed = !fix;
+  for (let n = 0; n < LOAN_MAX; n++) {
+    const ym = shiftMonth(item.start_date.slice(0, 7), n);
+    if (untilYm && ym > untilYm) break;
+    const [date] = datesInMonth({ freq: "monthly", start_date: item.start_date, end_date: null }, ym);
+    if (!date) break;
+    if (fix && !fixed && date > fix.on) { balance = fix.balance; fixed = true; }
+    if (fixed && balance <= 0) break; // before the lender's figure applies, payments carry on whatever these sums say
+    const interest = round2(((loan.kind === "flat" ? Number(loan.principal) : balance) * Number(loan.rate)) / 1200);
+    const pay = fixed ? Math.min(amountOn(item, date, percent), round2(balance + interest)) : amountOn(item, date, percent);
+    balance = Math.max(0, round2(balance + interest - pay));
+    rows.push({ date, pay, interest: Math.min(interest, pay), balance });
+  }
+  return rows;
+}
+
+/** Where a loan stands on a day: what is still owed, payments left, the last payment's date, and all the interest it costs. */
+export function loanNow(item: Lent, percent: number, today: string) {
+  const rows = loanSchedule(item, percent);
+  const loan = item.loan!;
+  const done = rows.filter((r) => r.date <= today);
+  let balance = done.length ? done[done.length - 1].balance : Number(loan.principal);
+  // The lender's figure is the latest word when no payment has fallen due since.
+  if (loan.balance != null && loan.balance_on && loan.balance_on <= today && loan.balance_on >= (done[done.length - 1]?.date ?? "")) balance = Number(loan.balance);
+  return {
+    balance, left: rows.length - done.length, ends: rows.length ? rows[rows.length - 1].date : null,
+    interest: round2(rows.reduce((s, r) => s + r.interest, 0)), paid: round2(rows.reduce((s, r) => s + r.pay, 0)),
+    endless: rows.length === LOAN_MAX, // the EMI does not cover the interest
+  };
+}
+
 /** An item in one month: what the rule says, and what was changed or recorded for that month. */
 export interface Line {
   item: MoneyItem;
@@ -141,10 +211,12 @@ export function monthLines(items: MoneyItem[], entries: MoneyEntry[], increases:
   const byItem = new Map(entries.filter((e) => e.month.slice(0, 7) === ym).map((e) => [e.item_id, e]));
   return items
     .map((item): Line | null => {
-      const dates = datesInMonth(item, ym);
-      if (!dates.length) return null;
       const percent = (item.freq !== "once" && item.increase_id && pct.get(item.increase_id)) || 0;
-      const rule = round2(dates.reduce((sum, d) => sum + amountOn(item, d, percent), 0));
+      // A loan is due while something is owed, and its last payment is what remains.
+      const due = item.loan ? loanSchedule(item, percent, ym).find((r) => r.date.slice(0, 7) === ym) : null;
+      const dates = item.loan ? (due ? [due.date] : []) : datesInMonth(item, ym);
+      if (!dates.length) return null;
+      const rule = due ? due.pay : round2(dates.reduce((sum, d) => sum + amountOn(item, d, percent), 0));
       const e = byItem.get(item.id);
       return { item, dates, rule, budget: e?.budget != null ? Number(e.budget) : rule, actual: e?.actual != null ? Number(e.actual) : null, paid: !!e?.paid_at, skipped: !!e?.skipped };
     })

@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import type { PlannerCtx } from "./usePlanner";
 import type { MoneyCtx } from "./useMoney";
 import Select from "./Select";
-import { amountPeriods, FREQ_LABELS, inr, monthLabel, parseAmount, type Line, type MoneyFreq, type MoneyItem, type MoneyKind, type Proposal } from "@/lib/money";
+import { amountPeriods, FREQ_LABELS, inr, loanEmi, loanNow, type Loan, monthLabel, parseAmount, type Line, type MoneyFreq, type MoneyItem, type MoneyKind, type Proposal } from "@/lib/money";
 import { isCurrent, type Circle } from "@/lib/circles";
 import { todayISO } from "@/lib/time";
 import { DateTime } from "luxon";
@@ -35,6 +35,16 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
   const [increase, setIncrease] = useState(from?.increase_id ?? "");
   const [people, setPeople] = useState<string[]>(from?.person_ids ?? []);
   const [notes, setNotes] = useState(from?.notes ?? "");
+  // A loan: an expense paid every month that also knows what was borrowed. Its amount is the EMI.
+  const [loanOn, setLoanOn] = useState(!!from?.loan);
+  const [taken, setTaken] = useState(from?.loan ? String(from.loan.principal) : "");
+  const [rate, setRate] = useState(from?.loan ? String(from.loan.rate) : "");
+  const [loanKind, setLoanKind] = useState<Loan["kind"]>(from?.loan?.kind ?? "reducing");
+  const [tenure, setTenure] = useState(from?.loan ? String(from.loan.months) : "");
+  const [owed, setOwed] = useState(from?.loan?.balance != null ? String(from.loan.balance) : "");
+  const [owedOn, setOwedOn] = useState(from?.loan?.balance_on ?? "");
+  // Until an EMI is typed, the usual one for the loan is shown and saved.
+  const [emiOwn, setEmiOwn] = useState(!!from?.loan);
   const [saving, setSaving] = useState(false);
   const [confirm, setConfirm] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -80,7 +90,14 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
   );
   const family = money.people.filter((p) => !p.archived_at || people.includes(p.id));
   const expense = kind === "expense";
-  const value = parseAmount(amount);
+  const isLoan = loanOn && expense && money.loans;
+  const loanText = { principal: parseAmount(taken), rate: rate.trim() ? Number(rate) : NaN, months: /^\d+$/.test(tenure.trim()) ? Number(tenure) : NaN };
+  const loanOk = isLoan && loanText.principal !== null && loanText.principal > 0 && loanText.rate >= 0 && loanText.rate < 100 && loanText.months >= 1 && loanText.months <= 600;
+  const owedValue = owed.trim() ? parseAmount(owed) : null;
+  const loan: Loan | null = loanOk ? { principal: loanText.principal!, rate: loanText.rate, kind: loanKind, months: loanText.months, balance: owedValue !== null && owedOn ? owedValue : null, balance_on: owedValue !== null && owedOn ? owedOn : null } : null;
+  const usual = loan ? loanEmi(loan) : null;
+  const amountText = isLoan && !emiOwn && usual !== null ? String(usual) : amount;
+  const value = parseAmount(amountText);
   // The stretches as they stand in the form, for saying "to 31 Mar 2026" beside each and marking the one in force today.
   const fmtDay = (iso: string) => DateTime.fromISO(iso).toFormat("d LLL yyyy");
   const periods = start ? amountPeriods({ amount: value ?? 0, start_date: start, end_date: end || null, amount_steps: steps.filter((x) => x.from > start).map((x) => ({ from: x.from, amount: parseAmount(x.amount) ?? 0 })) }) : [];
@@ -89,6 +106,11 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
   // Which row is in force today: 0 is the first amount, n + 1 the nth change as listed.
   const nowFrom = [...periods].reverse().find((p) => p.from <= todayIso)?.from;
   const nowAt = nowFrom === undefined ? -1 : nowFrom === start ? 0 : steps.findIndex((x) => x.from === nowFrom) + 1;
+
+  // Where the loan stands, as the form reads now.
+  const stands = loan && value !== null && start
+    ? loanNow({ amount: value, start_date: start, amount_steps: steps.flatMap((x) => { const a = parseAmount(x.amount); return x.from > start && a !== null ? [{ from: x.from, amount: a }] : []; }), loan }, Number(money.increases.find((i) => i.id === increase)?.percent ?? 0), todayIso)
+    : null;
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
@@ -99,6 +121,14 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
     if (!bank) return setError(`Choose the bank it ${expense ? "is paid from" : "comes into"}.`);
     if (!type) return setError(`Choose ${expense ? "an expense" : "an income"} type.`);
     if (freq !== "once" && end && end < start) return setError("The last date is before the first.");
+    if (isLoan) {
+      if (loanText.principal === null || loanText.principal <= 0) return setError("Enter the amount taken as a number, for example 500000.");
+      if (!(loanText.rate >= 0 && loanText.rate < 100)) return setError("Enter the interest for a year as a percentage, for example 9.5. Use 0 for none.");
+      if (!(loanText.months >= 1 && loanText.months <= 600)) return setError("Enter the tenure as a number of months, for example 60.");
+      if (owed.trim() && owedValue === null) return setError("Enter the balance as a number.");
+      if (!!owed.trim() !== !!owedOn) return setError("Give the lender’s balance both a figure and a date, or leave both empty.");
+      if (value <= 0) return setError("Enter the EMI as a number.");
+    }
     // A one-time item has one amount. Otherwise each change needs a date after the first date, its own day, and a figure.
     const changes = freq === "once" ? [] : steps.map((x) => ({ from: x.from, amount: parseAmount(x.amount) }));
     if (changes.some((x) => !x.from || x.amount === null)) return setError("Give each change of amount a date and a figure, or remove it.");
@@ -112,6 +142,8 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
       bank_id: bank || null, type_id: type || null, increase_id: freq === "once" ? null : increase || null, person_ids: people, notes: notes.trim() || null,
       // Sent only when the database has the column (0020).
       ...(money.steps ? { amount_steps: changes } : {}),
+      // Likewise (0021). Cleared when the item is no longer a loan.
+      ...(money.loans ? { loan: isLoan ? loan : null } : {}),
     };
     const result = scope ? await ask(existing ? "change" : "add", row) : existing ? await supabase.from("money_items").update(row).eq("id", existing.id) : await supabase.from("money_items").insert(row);
     setSaving(false);
@@ -149,18 +181,39 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
           <button type="button" key={k} className={kind === k ? "is-active" : ""} aria-pressed={kind === k} onClick={() => { setKind(k); setType(""); setAdding(null); }}>{k === "expense" ? "Expense item" : "Income item"}</button>
         ))}
       </div>
-      <label className="field"><span>Name</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder={expense ? "Wifi bill" : "Salary"} autoFocus={!existing} /></label>
-      <label className="field"><span>Repeats</span><Select id="money-freq" value={freq} options={Object.entries(FREQ_LABELS).map(([v, label]) => ({ value: v, label }))} onChange={(v) => setFreq(v as MoneyFreq)} /></label>
+      {expense && money.loans && (
+        <div className="segmented" role="group" aria-label="Sort of expense">
+          <button type="button" className={!loanOn ? "is-active" : ""} aria-pressed={!loanOn} onClick={() => setLoanOn(false)}>Plain</button>
+          <button type="button" className={loanOn ? "is-active" : ""} aria-pressed={loanOn} onClick={() => { setLoanOn(true); setFreq("monthly"); setEnd(""); }}>Loan</button>
+        </div>
+      )}
+      <label className="field"><span>Name</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder={isLoan ? "Home loan" : expense ? "Wifi bill" : "Salary"} autoFocus={!existing} /></label>
+      {isLoan && (
+        <>
+          <div className="field-row">
+            <label className="field"><span>Amount taken</span><input value={taken} onChange={(e) => setTaken(e.target.value)} inputMode="decimal" placeholder="₹" aria-invalid={!!taken && loanText.principal === null} /></label>
+            <label className="field"><span>Interest a year</span><input value={rate} onChange={(e) => setRate(e.target.value)} inputMode="decimal" placeholder="%" /></label>
+          </div>
+          <div className="field-row">
+            <label className="field"><span>Tenure <span className="muted">(months)</span></span><input value={tenure} onChange={(e) => setTenure(e.target.value)} inputMode="numeric" placeholder="60" /></label>
+            <div className="field">
+              <span>Interest on</span>
+              <Select id="money-loan-kind" value={loanKind} options={[{ value: "reducing", label: "Reducing balance" }, { value: "flat", label: "Flat" }]} onChange={(v) => setLoanKind(v as Loan["kind"])} />
+            </div>
+          </div>
+        </>
+      )}
+      {!isLoan && <label className="field"><span>Repeats</span><Select id="money-freq" value={freq} options={Object.entries(FREQ_LABELS).map(([v, label]) => ({ value: v, label }))} onChange={(v) => setFreq(v as MoneyFreq)} /></label>}
       <div className="field-row">
-        <label className="field"><span>{freq === "once" ? "Date" : "First date"}</span><input type="date" value={start} onChange={(e) => setStart(e.target.value)} /></label>
-        {freq !== "once" && <label className="field"><span>Last date <span className="muted">(optional)</span></span><input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label>}
+        <label className="field"><span>{isLoan ? "First EMI date" : freq === "once" ? "Date" : "First date"}</span><input type="date" value={start} onChange={(e) => setStart(e.target.value)} /></label>
+        {freq !== "once" && !isLoan && <label className="field"><span>Last date <span className="muted">(optional)</span></span><input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label>}
       </div>
       {/* The amount, and how it changes over time: a row for each stretch, the first from the first date. */}
       <fieldset className="field">
-        <legend>Budget amount{freq !== "once" && <span className="muted"> (each time)</span>}</legend>
+        <legend>{isLoan ? "EMI" : "Budget amount"}{freq !== "once" && <span className="muted"> ({isLoan ? "each month" : "each time"})</span>}</legend>
         <div className="amt-steps">
           <div className={`amt-step ${periods.length > 1 && nowAt === 0 ? "is-now" : ""}`}>
-            <input value={amount} onChange={(e) => setAmount(e.target.value)} inputMode="decimal" placeholder="₹" aria-label={freq === "once" || !steps.length ? "Budget amount" : "Amount from the first date"} aria-invalid={!!amount && value === null} />
+            <input value={amountText} onChange={(e) => { setAmount(e.target.value); setEmiOwn(true); }} inputMode="decimal" placeholder="₹" aria-label={freq === "once" || !steps.length ? (isLoan ? "EMI" : "Budget amount") : "Amount from the first date"} aria-invalid={!!amount && value === null} />
             {freq !== "once" && steps.length > 0 && <span className="amt-when">from {fmtDay(start)}{periods[0]?.to ? `, to ${fmtDay(periods[0].to)}` : ""}</span>}
           </div>
           {freq !== "once" && steps.map((x, n) => (
@@ -177,8 +230,29 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
         {freq !== "once" && money.steps && (
           <button type="button" className="chip chip-dashed amt-add" onClick={() => setSteps([...steps, { from: "", amount: "" }])}>＋ Change the amount from a date</button>
         )}
-        <span className="hint">{steps.length && freq !== "once" ? "Each amount holds until the next one starts." : `What you plan for. What you really ${expense ? "pay" : "receive"} is recorded month by month.`}</span>
+        {isLoan && emiOwn && usual !== null && value !== usual && <button type="button" className="chip chip-dashed amt-add" onClick={() => setEmiOwn(false)}>Use the usual EMI, {inr(usual)}</button>}
+        <span className="hint">{isLoan ? (emiOwn ? "Each payment covers the month’s interest first; the rest comes off what is owed." : "Worked out from the loan. Type over it to use your lender’s figure.") : steps.length && freq !== "once" ? "Each amount holds until the next one starts." : `What you plan for. What you really ${expense ? "pay" : "receive"} is recorded month by month.`}</span>
       </fieldset>
+      {isLoan && (
+        <>
+          {stands && (
+            <dl className="loan-facts" aria-live="polite">
+              <div><dt>Owed today</dt><dd>{inr(stands.balance)}</dd></div>
+              <div><dt>Interest in all</dt><dd>{stands.endless ? "—" : inr(stands.interest)}</dd></div>
+              <div><dt>Ends</dt><dd>{stands.endless || !stands.ends ? "never" : DateTime.fromISO(stands.ends).toFormat("LLL yyyy")}</dd></div>
+            </dl>
+          )}
+          {stands?.endless && <div className="alert alert-warn">This EMI does not cover the month’s interest, so the loan never ends. Raise the EMI.</div>}
+          <fieldset className="field">
+            <legend>Lender’s balance <span className="muted">(optional)</span></legend>
+            <div className="field-row">
+              <input value={owed} onChange={(e) => setOwed(e.target.value)} inputMode="decimal" placeholder="₹ still owed" aria-label="Balance the lender shows" />
+              <input type="date" value={owedOn} max={todayIso} onChange={(e) => setOwedOn(e.target.value)} aria-label="Date of that balance" />
+            </div>
+            <span className="hint">If your statement shows a different balance, enter it with its date. The sums carry on from there.</span>
+          </fieldset>
+        </>
+      )}
       <div className="field">
         <span>Bank</span>
         <Select id="money-bank" value={bank} options={offer(money.banks, bank, "bank")} onChange={(v) => (v === NEW ? setAdding({ what: "bank", name: "", balance: "" }) : setBank(v))} />
