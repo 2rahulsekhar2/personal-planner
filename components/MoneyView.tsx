@@ -929,15 +929,32 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
   };
   const moveAsked = (l: Line) => money.proposals.some((p) => p.status === "pending" && p.action === "change" && p.item_id === l.item.id && p.payload.start_date?.slice(0, 7) === nowYm);
 
-  const monthBar = (
-    <div className="toolbar">
+  // What sits in the middle of the bar: the month and its arrows, or on the year tab the twelve months and theirs.
+  const monthMid = (
+    <>
       <div className="toolbar-group">
         <button className="btn" onClick={() => setPicked(shiftMonth(ym, -1))} aria-label="Previous month">‹</button>
         <button className="btn" onClick={() => setPicked(shiftMonth(ym, 1))} aria-label="Next month">›</button>
       </div>
-      <h1 className="toolbar-title">{monthLabel(ym)}</h1>
-      {ym !== nowYm && <button className="btn" onClick={() => setPicked(null)}>This month</button>}
-    </div>
+      <h1 className="toolbar-title" aria-label={monthLabel(ym)}>
+        <span className="yr-wide">{monthLabel(ym)}</span>
+        <span className="yr-narrow">{DateTime.fromISO(`${ym}-01`).toFormat("LLL yyyy")}</span>
+      </h1>
+      {ym !== nowYm && <button className="btn btn-sm" onClick={() => setPicked(null)}><span className="yr-wide">This month</span><span className="yr-narrow">Now</span></button>}
+    </>
+  );
+  const yearMid = (
+    <>
+      <div className="toolbar-group">
+        <button className="btn" onClick={() => setYearPick(shiftMonth(yearFrom, -12))} aria-label="Previous 12 months">‹</button>
+        <button className="btn" onClick={() => setYearPick(shiftMonth(yearFrom, 12))} aria-label="Next 12 months">›</button>
+      </div>
+      <h1 className="toolbar-title" aria-label={`${monthLabel(yearFrom)} to ${monthLabel(shiftMonth(yearFrom, 11))}`}>
+        <span className="yr-wide">{DateTime.fromISO(`${yearFrom}-01`).toFormat("LLL yyyy")} to {DateTime.fromISO(`${shiftMonth(yearFrom, 11)}-01`).toFormat("LLL yyyy")}</span>
+        <span className="yr-narrow">{DateTime.fromISO(`${yearFrom}-01`).toFormat("LLL yy")} – {DateTime.fromISO(`${shiftMonth(yearFrom, 11)}-01`).toFormat("LLL yy")}</span>
+      </h1>
+      {yearFrom !== nowYm && <button className="btn btn-sm" onClick={() => setYearPick(null)}><span className="yr-wide">This month</span><span className="yr-narrow">Now</span></button>}
+    </>
   );
 
   // A line opened from the year is of the month clicked, not the month on show.
@@ -973,9 +990,14 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
       <main className={`main ${panel ? "has-panel" : ""}`}>
         <section className="content">
           <div className={`page ${tab === "year" ? "is-wide" : ""}`}>
-            {/* The year keeps the grid high on the screen: the sections and whose budget sit in its one bar, not on rows of their own. */}
-            {tab !== "year" && tabStrip}
-            {tab !== "year" && scopeBar}
+            {/* One bar on every tab. Wide: the tabs and chips. On a phone each folds into a button that opens its list, at the right end. */}
+            <div className="toolbar yr-bar">
+              <div className="yr-wide">{tabStrip}</div>
+              {tab === "year" ? yearMid : tab === "month" || tab === "banks" || tab === "insights" ? monthMid : null}
+              <div className="yr-wide yr-scope">{scopeBar}</div>
+              {families.length > 0 && <div className="yr-narrow yr-pick yr-scope" aria-label="Whose budget"><Select id="money-scope" value={sid ?? ""} options={[{ value: "", label: "Mine" }, ...families.map((c) => ({ value: c.id, label: c.name }))]} onChange={(v) => pick(v || null)} /></div>}
+              <div className="yr-narrow yr-pick yr-section" aria-label="Money section"><Select id="money-section" value={tab} options={TABS} onChange={(v) => setTab(v as Tab)} /></div>
+            </div>
             {money.error && <div className="alert alert-error" role="alert">Couldn’t load your budget: {money.error}. <button className="link" onClick={() => money.reload()}>Retry</button></div>}
 
             {open.length > 0 && (
@@ -986,7 +1008,6 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
 
             {tab === "month" && (
               <>
-                {monthBar}
                 <section className={`card month-sum ${left < 0 ? "is-short" : ""}`}>
                   <p className="sum-left"><strong>{left < 0 ? "− " : ""}{inr(Math.abs(left))}</strong> {left < 0 ? "short" : "left"}</p>
                   {flow("In", income, "is-in", "received")}
@@ -1015,22 +1036,6 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
 
             {tab === "year" && (
               <>
-                {/* Wide: the tabs and chips as they are elsewhere. On a phone each folds into a button that opens its list. */}
-                <div className="toolbar yr-bar">
-                  <div className="yr-wide">{tabStrip}</div>
-                  <div className="yr-narrow yr-pick is-left" aria-label="Money section"><Select id="money-section" value={tab} options={TABS} onChange={(v) => setTab(v as Tab)} /></div>
-                  <div className="toolbar-group">
-                    <button className="btn" onClick={() => setYearPick(shiftMonth(yearFrom, -12))} aria-label="Previous 12 months">‹</button>
-                    <button className="btn" onClick={() => setYearPick(shiftMonth(yearFrom, 12))} aria-label="Next 12 months">›</button>
-                  </div>
-                  <h1 className="toolbar-title" aria-label={`${monthLabel(yearFrom)} to ${monthLabel(shiftMonth(yearFrom, 11))}`}>
-                    <span className="yr-wide">{DateTime.fromISO(`${yearFrom}-01`).toFormat("LLL yyyy")} to {DateTime.fromISO(`${shiftMonth(yearFrom, 11)}-01`).toFormat("LLL yyyy")}</span>
-                    <span className="yr-narrow">{DateTime.fromISO(`${yearFrom}-01`).toFormat("LLL yy")} – {DateTime.fromISO(`${shiftMonth(yearFrom, 11)}-01`).toFormat("LLL yy")}</span>
-                  </h1>
-                  {yearFrom !== nowYm && <button className="btn btn-sm" onClick={() => setYearPick(null)}><span className="yr-wide">This month</span><span className="yr-narrow">Now</span></button>}
-                  <div className="yr-wide yr-scope">{scopeBar}</div>
-                  {families.length > 0 && <div className="yr-narrow yr-pick yr-scope" aria-label="Whose budget"><Select id="money-scope" value={sid ?? ""} options={[{ value: "", label: "Mine" }, ...families.map((c) => ({ value: c.id, label: c.name }))]} onChange={(v) => pick(v || null)} /></div>}
-                </div>
                 <Year view={view} from={yearFrom} nowYm={nowYm} canEdit={canEdit} groupBy={groupBy}
                   onLine={(id, m) => setPanel({ kind: "line", id, ym: m })} onItem={(id) => setPanel({ kind: "item", id })}
                   onAdd={(m, kind) => setPanel({ kind: "item", as: kind, date: m === nowYm ? todayISO(ctx.tz) : `${m}-01` })} />
@@ -1042,14 +1047,12 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
 
             {tab === "banks" && (
               <>
-                {monthBar}
                 <Banks view={view} lines={lines} canEdit={canEdit} who={(b) => (scope ? nameOf(scope, b.user_id ?? "", ctx.userId).replace("You", "you") : "")} onToggle={togglePaid} onOpen={openLine} onSetup={() => setTab("setup")} />
               </>
             )}
 
             {tab === "insights" && (
               <>
-                {monthBar}
                 <Insights lines={lines} view={view} ym={ym} today={todayISO(ctx.tz)} />
               </>
             )}
