@@ -6,11 +6,11 @@ import type { MoneyCtx } from "./useMoney";
 import Panel from "./Panel";
 import MoneySetup, { TONES } from "./MoneySetup";
 import { MoneyItemForm, MoneyLineForm } from "./MoneyItemForm";
-import { bankPosition, byPerson, byType, expected, forecast, FREQ_LABELS, inr, monthLabel, monthLines, shiftMonth, totals, waitingOn, type Line, type MoneyKind, type Proposal } from "@/lib/money";
+import { amountOn, bankPosition, byPerson, byType, expected, forecast, FREQ_LABELS, inr, monthLabel, monthLines, shiftMonth, totals, waitingOn, type Line, type MoneyKind, type Proposal } from "@/lib/money";
 import { canAdd, isCurrent, type Circle } from "@/lib/circles";
 import { todayISO } from "@/lib/time";
 
-type Tab = "month" | "banks" | "insights" | "setup";
+type Tab = "month" | "items" | "banks" | "insights" | "setup";
 // `again`: a rejected request, opened to be changed and sent once more.
 type PanelState = { kind: "item"; id?: string; as?: MoneyKind; again?: Proposal } | { kind: "line"; id: string } | null;
 
@@ -293,6 +293,78 @@ function Insights({ lines, view, ym }: { lines: Line[]; view: MoneyCtx; ym: stri
   );
 }
 
+type ItemFilter = "all" | "income" | "expense" | "fix";
+/**
+ * Every income and expense item in the budget in view, whatever the month: what it is, what it comes to now, how
+ * often, and from where. Items missing a bank or a type are marked, and can be found with the "To fix" filter.
+ */
+function Items({ view, today, canEdit, onOpen, onNew }: { view: MoneyCtx; today: string; canEdit: boolean; onOpen: (id: string) => void; onNew: () => void }) {
+  const [q, setQ] = useState("");
+  const [filter, setFilter] = useState<ItemFilter>("all");
+  const pct = new Map(view.increases.map((i) => [i.id, Number(i.percent)]));
+  const bankAt = new Map(view.banks.map((b, n) => [b.id, { name: b.name, tone: TONES[n % TONES.length] }]));
+  const typeName = new Map(view.types.map((t) => [t.id, t.name]));
+  const broken = (i: MoneyCtx["items"][number]) => !i.bank_id || !bankAt.has(i.bank_id) || !i.type_id || !typeName.has(i.type_id);
+  const counts = { all: view.items.length, income: view.items.filter((i) => i.kind === "income").length, expense: view.items.filter((i) => i.kind === "expense").length, fix: view.items.filter(broken).length };
+  const text = q.trim().toLowerCase();
+  const rows = view.items
+    .filter((i) => (filter === "all" ? true : filter === "fix" ? broken(i) : i.kind === filter))
+    .filter((i) => !text || i.name.toLowerCase().includes(text))
+    .sort((a, b) => a.name.localeCompare(b.name));
+
+  return (
+    <>
+      <div className="page-head">
+        <h1>Items</h1>
+        {canEdit && <button className="btn btn-primary" onClick={onNew}>＋ New item</button>}
+      </div>
+      <div className="items-filters">
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by name" aria-label="Search items by name" />
+        <div className="chips" role="group" aria-label="Show">
+          {([["all", "All"], ["income", "Income"], ["expense", "Expenses"], ["fix", "To fix"]] as const).filter(([f]) => f !== "fix" || counts.fix > 0).map(([f, label]) => (
+            <button key={f} className={`chip chip-sm ${filter === f ? "is-selected" : ""}`} aria-pressed={filter === f} onClick={() => setFilter(f)}>{label} <span className="items-count">{counts[f]}</span></button>
+          ))}
+        </div>
+      </div>
+      {rows.length === 0 ? (
+        <p className="empty card">{view.items.length === 0 ? "No items yet. An item is one income or expense, with how much and how often." : "Nothing matches."}</p>
+      ) : (
+        <ul className="card list items-list">
+          {rows.map((i) => {
+            const bank = i.bank_id ? bankAt.get(i.bank_id) : undefined;
+            const type = i.type_id ? typeName.get(i.type_id) : undefined;
+            const ended = !!i.end_date && i.end_date < today;
+            const later = i.start_date > today;
+            const amount = amountOn(i, later ? i.start_date : ended ? i.end_date! : today, (i.freq !== "once" && i.increase_id && pct.get(i.increase_id)) || 0);
+            const changes = (i.amount_steps ?? []).length;
+            return (
+              <li key={i.id}>
+                <button className={`items-row ${ended ? "is-ended" : ""}`} onClick={() => onOpen(i.id)}>
+                  {/* An arrow for which way the money moves: up and out, or down and in. */}
+                  <span className={`kit-way ${i.kind === "income" ? "is-in" : "is-out"}`} role="img" aria-label={i.kind === "income" ? "Income" : "Expense"}>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d={i.kind === "income" ? "M12 5v14M6 13l6 6 6-6" : "M12 19V5M6 11l6-6 6 6"} /></svg>
+                  </span>
+                  <span className="grow items-what">
+                    <span className="items-name">{i.name}</span>
+                    <span className="task-due line-meta">
+                      {bank ? <><span className={`kit-mono is-mini act-${bank.tone}`} aria-hidden>{bank.name.trim()[0]?.toUpperCase()}</span>{bank.name}</> : <span className="items-fix">needs bank</span>}
+                      {type ? <span>{type}</span> : <span className="items-fix">needs type</span>}
+                    </span>
+                  </span>
+                  <span className="money-amt">
+                    <strong>{inr(amount)}</strong>
+                    <span>{ended ? "ended" : later ? `from ${DateTime.fromISO(i.start_date).toFormat("d LLL yyyy")}` : FREQ_LABELS[i.freq].toLowerCase()}{changes > 0 && !ended ? `, ${changes} ${changes === 1 ? "change" : "changes"}` : ""}</span>
+                  </span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </>
+  );
+}
+
 const nameOf = (c: Circle, userId: string, me: string | null) => (userId === me ? "You" : c.circle_members.find((m) => m.user_id === userId)?.email.split("@")[0] ?? "A member");
 
 /** A circle's open requests: each waits for every other member to approve, or has been rejected with a reason. */
@@ -371,6 +443,7 @@ function Requests({ ctx, money, scope, canEdit, onAgain }: { ctx: PlannerCtx; mo
 export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; money: MoneyCtx; circles: Circle[] }) {
   const [tab, setTab] = useState<Tab>("month");
   const [panel, setPanel] = useState<PanelState>(null);
+  const [formKind, setFormKind] = useState<MoneyKind>("expense"); // what the open item form is set to, for the panel's title
   // The month on show follows the calendar until one is picked by hand.
   const [picked, setPicked] = useState<string | null>(null);
   const nowYm = todayISO(ctx.tz).slice(0, 7);
@@ -520,7 +593,7 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
         <section className="content">
           <div className="page">
             <div className="view-toggle money-tabs" role="group" aria-label="Money section">
-              {([["month", "Month"], ["banks", "Banks"], ["insights", "Insights"], ["setup", "Setup"]] as const).map(([t, label]) => (
+              {([["month", "Month"], ["items", "Items"], ["banks", "Banks"], ["insights", "Insights"], ["setup", "Setup"]] as const).map(([t, label]) => (
                 <button key={t} className={tab === t ? "is-active" : ""} aria-pressed={tab === t} onClick={() => setTab(t)}>{label}</button>
               ))}
             </div>
@@ -561,6 +634,8 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
                 <Lines groupBy={groupBy} lines={lines.filter((l) => l.item.kind === "expense")} meta={new Set(lines.filter((l) => l.item.kind === "expense").map((l) => l.item.type_id)).size > 1 ? bankOnly : meta} onToggle={togglePaid} onOpen={openLine} locked={!canEdit} empty={`No expenses in ${monthLabel(ym)}.`} />
               </>
             )}
+
+            {tab === "items" && <Items view={view} today={todayISO(ctx.tz)} canEdit={canEdit} onOpen={(id) => setPanel({ kind: "item", id })} onNew={() => setPanel({ kind: "item" })} />}
 
             {tab === "banks" && (
               <>
@@ -621,10 +696,10 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
           </div>
         </section>
         {panel && (
-          <Panel title={panel.kind === "line" ? monthLabel(ym) : panelItem ? "Edit item" : "New item"} onClose={close}>
+          <Panel title={panel.kind === "line" ? monthLabel(ym) : `${panelItem ? "Edit" : "New"} ${formKind} item`} onClose={close}>
             {panel.kind === "line"
               ? panelLine ? <MoneyLineForm key={`${panelLine.item.id}-${ym}-${panelLine.paid}-${panelLine.skipped}-${panelLine.actual}-${panelLine.budget}`} ctx={ctx} money={money} line={panelLine} ym={ym} shared={!!scope} canEdit={canEdit} onEditItem={() => setPanel({ kind: "item", id: panelLine.item.id })} onDone={close} /> : <p className="muted">This item is not in {monthLabel(ym)}.</p>
-              : <MoneyItemForm key={panel.again?.id ?? panel.id ?? `new-${panel.as}-${sid}`} ctx={ctx} money={view} scope={scope} canEdit={canEdit} existing={panelItem} again={panel.again} kind={panel.as} onDone={close} />}
+              : <MoneyItemForm key={panel.again?.id ?? panel.id ?? `new-${panel.as}-${sid}`} ctx={ctx} money={view} scope={scope} canEdit={canEdit} existing={panelItem} again={panel.again} kind={panel.as} onKind={setFormKind} onDone={close} />}
           </Panel>
         )}
       </main>
