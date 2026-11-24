@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import type { PlannerCtx } from "./usePlanner";
 import type { MoneyCtx } from "./useMoney";
 import Select from "./Select";
-import { amountPeriods, FREQ_LABELS, inr, loanEmi, loanNow, type Loan, monthLabel, parseAmount, type Line, type MoneyFreq, type MoneyItem, type MoneyKind, type Proposal } from "@/lib/money";
+import { amountPeriods, evalFormula, formulaLoops, FREQ_LABELS, inr, loanEmi, loanNow, monthLines, withParts, type FormulaToken, type Loan, monthLabel, parseAmount, type Line, type MoneyFreq, type MoneyItem, type MoneyKind, type Proposal } from "@/lib/money";
 import { isCurrent, type Circle } from "@/lib/circles";
 import { todayISO } from "@/lib/time";
 import { DateTime } from "luxon";
@@ -36,7 +36,11 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
   const [people, setPeople] = useState<string[]>(from?.person_ids ?? []);
   const [notes, setNotes] = useState(from?.notes ?? "");
   // A loan: an expense paid every month that also knows what was borrowed. Its amount is the EMI.
-  const [loanOn, setLoanOn] = useState(!!from?.loan);
+  const [loanOn, setLoanOn] = useState(!!from?.loan && !from?.formula);
+  // Computed: worked out each month from other items by a formula, built piece by piece.
+  const [computedOn, setComputedOn] = useState(!!from?.formula);
+  const [tokens, setTokens] = useState<FormulaToken[]>(from?.formula ?? []);
+  const [figure, setFigure] = useState(""); // a number being typed for the formula
   const [taken, setTaken] = useState(from?.loan ? String(from.loan.principal) : "");
   const [rate, setRate] = useState(from?.loan ? String(from.loan.rate) : "");
   const [loanKind, setLoanKind] = useState<Loan["kind"]>(from?.loan?.kind ?? "reducing");
@@ -90,14 +94,15 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
   );
   const family = money.people.filter((p) => !p.archived_at || people.includes(p.id));
   const expense = kind === "expense";
-  const isLoan = loanOn && expense && money.loans;
+  const isComputed = computedOn && money.formulas;
+  const isLoan = loanOn && !isComputed && expense && money.loans;
   const loanText = { principal: parseAmount(taken), rate: rate.trim() ? Number(rate) : NaN, months: /^\d+$/.test(tenure.trim()) ? Number(tenure) : NaN };
   const loanOk = isLoan && loanText.principal !== null && loanText.principal > 0 && loanText.rate >= 0 && loanText.rate < 100 && loanText.months >= 1 && loanText.months <= 600;
   const owedValue = owed.trim() ? parseAmount(owed) : null;
   const loan: Loan | null = loanOk ? { principal: loanText.principal!, rate: loanText.rate, kind: loanKind, months: loanText.months, balance: owedValue !== null && owedOn ? owedValue : null, balance_on: owedValue !== null && owedOn ? owedOn : null } : null;
   const usual = loan ? loanEmi(loan) : null;
   const amountText = isLoan && !emiOwn && usual !== null ? String(usual) : amount;
-  const value = parseAmount(amountText);
+  const value = isComputed ? 0 : parseAmount(amountText); // a computed item has no amount of its own
   // The stretches as they stand in the form, for saying "to 31 Mar 2026" beside each and marking the one in force today.
   const fmtDay = (iso: string) => DateTime.fromISO(iso).toFormat("d LLL yyyy");
   const periods = start ? amountPeriods({ amount: value ?? 0, start_date: start, end_date: end || null, amount_steps: steps.filter((x) => x.from > start).map((x) => ({ from: x.from, amount: parseAmount(x.amount) ?? 0 })) }) : [];
@@ -112,10 +117,34 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
     ? loanNow({ amount: value, start_date: start, amount_steps: steps.flatMap((x) => { const a = parseAmount(x.amount); return x.from > start && a !== null ? [{ from: x.from, amount: a }] : []; }), loan }, Number(money.increases.find((i) => i.id === increase)?.percent ?? 0), todayIso)
     : null;
 
+  // The formula: what it comes to this month as it stands, and which items may go into it.
+  const selfId = existing?.id ?? "__new";
+  const nameOf = new Map(money.items.map((i) => [i.id, i.name]));
+  // An item whose own formula leads back here would make a loop, so it is not offered.
+  const usable = isComputed ? money.items.filter((i) => i.id !== selfId && !formulaLoops(selfId, [{ t: "item", id: i.id }], money.items)) : [];
+  const formulaOk = !evalFormula(tokens, () => 1).error;
+  const trial = isComputed && tokens.length
+    ? withParts(monthLines([...money.items.filter((i) => i.id !== selfId), { id: selfId, kind, name, amount: 0, freq: "monthly", start_date: `${todayIso.slice(0, 7)}-01`, end_date: null, bank_id: null, type_id: null, increase_id: null, person_ids: [], notes: null, formula: tokens }], money.entries, money.increases, todayIso.slice(0, 7))).find((l) => l.item.id === selfId)
+    : undefined;
+  const put = (t: FormulaToken) => { setTokens([...tokens, t]); setError(null); };
+  const putFigure = (pct: boolean) => {
+    const n = Number(figure.replace(/[₹,%\s]/g, ""));
+    if (!figure.trim() || !Number.isFinite(n) || n < 0) return setError("Type a number first, for example 2000 or 12.5.");
+    put(pct ? { t: "pct", v: n } : { t: "num", v: n });
+    setFigure("");
+  };
+  const SIGNS = { "+": "+", "-": "−", "*": "×", "/": "÷", "(": "(", ")": ")" } as const;
+  const said = (t: FormulaToken) => (t.t === "item" ? nameOf.get(t.id) ?? "a deleted item" : t.t === "num" ? String(t.v) : t.t === "pct" ? `${t.v}%` : SIGNS[t.v]);
+
   async function save(e: React.FormEvent) {
     e.preventDefault();
     if (saving) return;
     if (!name.trim()) return setError("Give it a name.");
+    if (isComputed) {
+      if (!tokens.length) return setError("Build the formula: press an item or type a number, then a sign, and so on.");
+      if (!formulaOk) return setError("The formula is not complete. Check for a sign with nothing after it, or a bracket left open.");
+      if (formulaLoops(selfId, tokens, money.items)) return setError("The formula uses an item that is itself worked out from this one.");
+    }
     // A loan's own figures first: the EMI is worked out from them.
     if (isLoan) {
       if (loanText.principal === null || loanText.principal <= 0) return setError("Enter the amount taken as a number, for example 500000.");
@@ -130,7 +159,7 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
     if (!type) return setError(`Choose ${expense ? "an expense" : "an income"} type.`);
     if (freq !== "once" && end && end < start) return setError("The last date is before the first.");
     // A one-time item has one amount. Otherwise each change needs a date after the first date, its own day, and a figure.
-    const changes = freq === "once" ? [] : steps.map((x) => ({ from: x.from, amount: parseAmount(x.amount) }));
+    const changes = freq === "once" || isComputed ? [] : steps.map((x) => ({ from: x.from, amount: parseAmount(x.amount) }));
     if (changes.some((x) => !x.from || x.amount === null)) return setError("Give each change of amount a date and a figure, or remove it.");
     if (changes.some((x) => x.from <= start)) return setError("A change of amount must start after the first date. To change the first amount, edit it directly.");
     if (end && changes.some((x) => x.from > end)) return setError("A change of amount starts after the last date.");
@@ -139,11 +168,13 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
     setSaving(true);
     const row = {
       kind, name: name.trim(), amount: value, freq, start_date: start, end_date: freq === "once" ? null : end || null,
-      bank_id: bank || null, type_id: type || null, increase_id: freq === "once" ? null : increase || null, person_ids: people, notes: notes.trim() || null,
+      bank_id: bank || null, type_id: type || null, increase_id: freq === "once" || isComputed ? null : increase || null, person_ids: people, notes: notes.trim() || null,
       // Sent only when the database has the column (0020).
       ...(money.steps ? { amount_steps: changes } : {}),
       // Likewise (0021). Cleared when the item is no longer a loan.
       ...(money.loans ? { loan: isLoan ? loan : null } : {}),
+      // Likewise (0022). shortcut: only items of the budget in view are offered, but the database does not check it; validate in money_propose if formulas are ever written outside this form
+      ...(money.formulas ? { formula: isComputed ? tokens : null } : {}),
     };
     const result = scope ? await ask(existing ? "change" : "add", row) : existing ? await supabase.from("money_items").update(row).eq("id", existing.id) : await supabase.from("money_items").insert(row);
     setSaving(false);
@@ -181,10 +212,11 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
           <button type="button" key={k} className={kind === k ? "is-active" : ""} aria-pressed={kind === k} onClick={() => { setKind(k); setType(""); setAdding(null); }}>{k === "expense" ? "Expense item" : "Income item"}</button>
         ))}
       </div>
-      {expense && money.loans && (
-        <div className="segmented" role="group" aria-label="Sort of expense">
-          <button type="button" className={!loanOn ? "is-active" : ""} aria-pressed={!loanOn} onClick={() => setLoanOn(false)}>Plain</button>
-          <button type="button" className={loanOn ? "is-active" : ""} aria-pressed={loanOn} onClick={() => { setLoanOn(true); setFreq("monthly"); setEnd(""); }}>Loan</button>
+      {((expense && money.loans) || money.formulas) && (
+        <div className="segmented" role="group" aria-label={`Sort of ${expense ? "expense" : "income"}`}>
+          <button type="button" className={!isLoan && !isComputed ? "is-active" : ""} aria-pressed={!isLoan && !isComputed} onClick={() => { setLoanOn(false); setComputedOn(false); }}>Plain</button>
+          {expense && money.loans && <button type="button" className={isLoan ? "is-active" : ""} aria-pressed={isLoan} onClick={() => { setLoanOn(true); setComputedOn(false); setFreq("monthly"); setEnd(""); }}>Loan</button>}
+          {money.formulas && <button type="button" className={isComputed ? "is-active" : ""} aria-pressed={isComputed} onClick={() => { setComputedOn(true); setLoanOn(false); }}>Computed</button>}
         </div>
       )}
       <label className="field"><span>Name</span><input value={name} onChange={(e) => setName(e.target.value)} placeholder={isLoan ? "Home loan" : expense ? "Wifi bill" : "Salary"} autoFocus={!existing} /></label>
@@ -208,8 +240,35 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
         <label className="field"><span>{isLoan ? "First EMI date" : freq === "once" ? "Date" : "First date"}</span><input type="date" value={start} onChange={(e) => setStart(e.target.value)} /></label>
         {freq !== "once" && !isLoan && <label className="field"><span>Last date <span className="muted">(optional)</span></span><input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label>}
       </div>
+      {isComputed && (
+        <fieldset className="field">
+          <legend>Formula</legend>
+          {/* The sum as built so far, read left to right. */}
+          <div className={`formula ${tokens.length && !formulaOk ? "is-open" : ""}`} role="group" aria-label="The formula so far">
+            {tokens.length === 0 ? <span className="muted">Press an item or type a number, then a sign.</span> : tokens.map((t, n) => <span key={n} className={t.t === "item" ? "formula-item" : t.t === "op" ? "formula-sign" : "formula-num"}>{said(t)}</span>)}
+          </div>
+          <div className="formula-keys">
+            {(["+", "-", "*", "/", "(", ")"] as const).map((v) => <button type="button" key={v} className="btn btn-sm" aria-label={{ "+": "Plus", "-": "Minus", "*": "Times", "/": "Divided by", "(": "Open bracket", ")": "Close bracket" }[v]} onClick={() => put({ t: "op", v })}>{SIGNS[v]}</button>)}
+            <button type="button" className="btn btn-sm btn-ghost" aria-label="Remove the last piece" disabled={!tokens.length} onClick={() => setTokens(tokens.slice(0, -1))}>⌫</button>
+            <button type="button" className="btn btn-sm btn-ghost" disabled={!tokens.length} onClick={() => setTokens([])}>Clear</button>
+          </div>
+          <div className="formula-figure" onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); putFigure(false); } }}>
+            <input value={figure} onChange={(e) => setFigure(e.target.value)} inputMode="decimal" placeholder="A number" aria-label="A number for the formula" />
+            <button type="button" className="btn btn-sm" onClick={() => putFigure(false)}>Add number</button>
+            <button type="button" className="btn btn-sm" onClick={() => putFigure(true)}>Add as %</button>
+          </div>
+          {usable.length > 0 ? (
+            <div className="chips chips-xs" role="group" aria-label="Items to use">
+              {usable.map((i) => <button type="button" key={i.id} className="chip" onClick={() => put({ t: "item", id: i.id })}>{i.name}</button>)}
+            </div>
+          ) : <span className="hint">There are no other items to use yet. Numbers still work.</span>}
+          {trial && formulaOk && <p className="formula-now" aria-live="polite">Comes to <strong>{inr(trial.budget)}</strong> in {monthLabel(todayIso.slice(0, 7))}</p>}
+          {tokens.length > 0 && (!formulaOk || trial?.warn) && <div className="alert alert-warn">{!formulaOk ? "Not complete yet." : `${trial!.warn} It shows as ₹0.`}</div>}
+          <span className="hint">An item used here stops being a line of its own: it shows under this one, and counts only through it. An item that is not due in a month counts as 0.</span>
+        </fieldset>
+      )}
       {/* The amount, and how it changes over time: a row for each stretch, the first from the first date. */}
-      <fieldset className="field">
+      {!isComputed && <fieldset className="field">
         <legend>{isLoan ? "EMI" : "Budget amount"}{freq !== "once" && <span className="muted"> ({isLoan ? "each month" : "each time"})</span>}</legend>
         <div className="amt-steps">
           <div className={`amt-step ${periods.length > 1 && nowAt === 0 ? "is-now" : ""}`}>
@@ -232,7 +291,7 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
         )}
         {isLoan && emiOwn && usual !== null && value !== usual && <button type="button" className="chip chip-dashed amt-add" onClick={() => setEmiOwn(false)}>Use the usual EMI, {inr(usual)}</button>}
         <span className="hint">{isLoan ? (emiOwn ? "Each payment covers the month’s interest first; the rest comes off what is owed." : "Worked out from the loan. Type over it to use your lender’s figure.") : steps.length && freq !== "once" ? "Each amount holds until the next one starts." : `What you plan for. What you really ${expense ? "pay" : "receive"} is recorded month by month.`}</span>
-      </fieldset>
+      </fieldset>}
       {isLoan && (
         <>
           {stands && (
@@ -263,7 +322,7 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
         <Select id="money-type" value={type} options={offer(money.types.filter((t) => t.kind === kind), type, "type")} onChange={(v) => (v === NEW ? setAdding({ what: "type", name: "", balance: "" }) : setType(v))} />
         {adder("type")}
       </div>
-      {freq !== "once" && (
+      {freq !== "once" && !isComputed && (
         <label className="field">
           <span>Yearly increase</span>
           <Select id="money-increase" value={increase} options={[NONE, ...money.increases.filter((i) => !i.archived_at || i.id === increase).map((i) => ({ value: i.id, label: `${i.name} (${Number(i.percent)}%)` }))]} onChange={setIncrease} />
@@ -308,7 +367,8 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
 /** One month of one item: its budget for that month alone, what was really paid, and whether to skip it. */
 export function MoneyLineForm({ ctx, money, line, ym, shared, canEdit, onEditItem, onDone }: { ctx: PlannerCtx; money: MoneyCtx; line: Line; ym: string; shared: boolean; canEdit: boolean; onEditItem: () => void; onDone: () => void }) {
   const [budget, setBudget] = useState(String(line.budget));
-  const [actual, setActual] = useState(line.actual === null ? "" : String(line.actual));
+  // A computed line's actual comes from its parts until one is typed here; then the typed one wins.
+  const [actual, setActual] = useState(line.actual === null || line.derived ? "" : String(line.actual));
   const [paid, setPaid] = useState(line.paid);
   const [skipped, setSkipped] = useState(line.skipped);
   const [saving, setSaving] = useState(false);
@@ -345,7 +405,8 @@ export function MoneyLineForm({ ctx, money, line, ym, shared, canEdit, onEditIte
       </label>
       <label className="field">
         <span>Actual amount <span className="muted">(optional)</span></span>
-        <input value={actual} onChange={(e) => setActual(e.target.value)} inputMode="decimal" placeholder={`What you really ${expense ? "paid" : "received"}`} />
+        <input value={actual} onChange={(e) => setActual(e.target.value)} inputMode="decimal" placeholder={line.derived ? `From its parts: ${inr(line.actual!)}` : `What you really ${expense ? "paid" : "received"}`} />
+        {line.parts && <span className="hint">Left empty, it follows what its parts really came to.</span>}
       </label>
       <label className="check"><input type="checkbox" checked={paid} onChange={(e) => setPaid(e.target.checked)} /> {expense ? "Paid" : "Received"}</label>
       {!shared && <label className="check"><input type="checkbox" checked={skipped} onChange={(e) => setSkipped(e.target.checked)} /> Skip this month</label>}

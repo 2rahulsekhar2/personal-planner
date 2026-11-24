@@ -1,12 +1,12 @@
 "use client";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { DateTime } from "luxon";
 import type { PlannerCtx } from "./usePlanner";
 import type { MoneyCtx } from "./useMoney";
 import Panel from "./Panel";
 import MoneySetup, { TONES } from "./MoneySetup";
 import { MoneyItemForm, MoneyLineForm } from "./MoneyItemForm";
-import { amountOn, loanNow, bankPosition, byPerson, byType, expected, forecast, FREQ_LABELS, inr, monthLabel, monthLines, shiftMonth, totals, waitingOn, type Line, type MoneyKind, type Proposal } from "@/lib/money";
+import { amountOn, loanNow, bankPosition, byPerson, byType, expected, forecast, FREQ_LABELS, inr, monthLabel, monthLines, partIds, shiftMonth, totals, waitingOn, withParts, type Line, type MoneyKind, type Proposal } from "@/lib/money";
 import { canAdd, isCurrent, type Circle } from "@/lib/circles";
 import { todayISO } from "@/lib/time";
 
@@ -91,7 +91,8 @@ function Lines({ lines, meta, onToggle, onOpen, empty, locked, flat, groupBy }: 
   const verb = lines[0].item.kind === "expense" ? "paid" : "received";
   // `noLeaf`: every line around this one falls on the same day, which is said once above them instead.
   const row = (l: Line, noLeaf: boolean) => (
-    <li key={l.item.id} className={`task-row ${l.paid ? "is-done" : ""} ${l.skipped ? "is-skipped" : ""}`}>
+    <Fragment key={l.item.id}>
+    <li className={`task-row ${l.paid ? "is-done" : ""} ${l.skipped ? "is-skipped" : ""}`}>
       <button className={`task-check ${l.paid ? "is-checked" : ""}`} disabled={l.skipped || locked} aria-pressed={l.paid} aria-label={`${l.item.name}: ${l.paid ? `mark not ${verb}` : `mark ${verb}`}`} onClick={() => onToggle(l)}>
         {l.paid && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>}
       </button>
@@ -103,7 +104,7 @@ function Lines({ lines, meta, onToggle, onOpen, empty, locked, flat, groupBy }: 
       )}
       <button className="task-main" onClick={() => onOpen(l)}>
         <span className="task-title">{l.item.name}</span>
-        {(l.skipped || meta?.(l)) && <span className="task-due line-meta">{l.skipped ? "Skipped" : meta!(l)}</span>}
+        {(l.skipped || l.warn || meta?.(l)) && <span className="task-due line-meta">{l.skipped ? "Skipped" : l.warn ? <span className="items-fix">{l.warn}</span> : meta!(l)}</span>}
       </button>
       <span className="money-amt">
         <strong>{inr(expected(l))}</strong>
@@ -112,6 +113,17 @@ function Lines({ lines, meta, onToggle, onOpen, empty, locked, flat, groupBy }: 
         {l.actual === null && Math.abs(l.budget - l.rule) >= 1 && <span>usually {inr(l.rule)}</span>}
       </span>
     </li>
+    {/* A computed item's parts, under it: each opens its own month, where what it really came to is recorded. */}
+    {withParts(l.parts ?? []).map((p) => (
+      <li key={p.item.id} className={`task-row line-part ${p.skipped ? "is-skipped" : ""}`}>
+        <button className="task-main" onClick={() => onOpen(p)} aria-label={`${p.item.name}, part of ${l.item.name}`}>
+          <span className="task-title">{p.item.name}</span>
+          {p.skipped && <span className="task-due line-meta">Skipped</span>}
+        </button>
+        <span className="money-amt"><span>{inr(expected(p))}</span></span>
+      </li>
+    ))}
+    </Fragment>
   );
 
   const typeIds = [...new Set(lines.map((l) => l.item.type_id))];
@@ -331,6 +343,9 @@ function Items({ view, today, canEdit, onOpen, onNew }: { view: MoneyCtx; today:
   const broken = (i: MoneyCtx["items"][number]) => !i.bank_id || !bankAt.has(i.bank_id) || !i.type_id || !typeName.has(i.type_id);
   const counts = { all: view.items.length, income: view.items.filter((i) => i.kind === "income").length, expense: view.items.filter((i) => i.kind === "expense").length, fix: view.items.filter(broken).length };
   const text = q.trim().toLowerCase();
+  // A part says whose it is; a computed item shows what it comes to this month.
+  const parentOf = new Map(view.items.flatMap((i) => [...partIds([i])].map((id) => [id, i.name] as const)));
+  const thisMonth = new Map(withParts(monthLines(view.items, view.entries, view.increases, today.slice(0, 7))).map((l) => [l.item.id, l]));
   const rows = view.items
     .filter((i) => (filter === "all" ? true : filter === "fix" ? broken(i) : i.kind === filter))
     .filter((i) => !text || i.name.toLowerCase().includes(text))
@@ -374,11 +389,12 @@ function Items({ view, today, canEdit, onOpen, onNew }: { view: MoneyCtx; today:
                     <span className="task-due line-meta">
                       {bank ? <><span className={`kit-mono is-mini act-${bank.tone}`} aria-hidden>{bank.name.trim()[0]?.toUpperCase()}</span>{bank.name}</> : <span className="items-fix">needs bank</span>}
                       {type ? <span>{type}</span> : <span className="items-fix">needs type</span>}
+                      {parentOf.has(i.id) && <span>part of {parentOf.get(i.id)}</span>}
                     </span>
                   </span>
                   <span className="money-amt">
-                    <strong>{inr(amount)}</strong>
-                    <span>{owes !== null ? (owes > 0 ? `loan, ${inr(owes)} owed` : "loan, paid off") : ended ? "ended" : later ? `from ${DateTime.fromISO(i.start_date).toFormat("d LLL yyyy")}` : FREQ_LABELS[i.freq].toLowerCase()}{changes > 0 && !ended ? `, ${changes} ${changes === 1 ? "change" : "changes"}` : ""}</span>
+                    <strong>{i.formula ? (thisMonth.has(i.id) ? inr(thisMonth.get(i.id)!.budget) : "—") : inr(amount)}</strong>
+                    <span>{i.formula ? "computed" : owes !== null ? (owes > 0 ? `loan, ${inr(owes)} owed` : "loan, paid off") : ended ? "ended" : later ? `from ${DateTime.fromISO(i.start_date).toFormat("d LLL yyyy")}` : FREQ_LABELS[i.freq].toLowerCase()}{changes > 0 && !ended ? `, ${changes} ${changes === 1 ? "change" : "changes"}` : ""}</span>
                   </span>
                 </button>
               </li>
@@ -599,7 +615,7 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
     </div>
   );
 
-  const panelLine = panel?.kind === "line" ? lines.find((l) => l.item.id === panel.id) : undefined;
+  const panelLine = panel?.kind === "line" ? withParts(lines).find((l) => l.item.id === panel.id) : undefined;
   const panelItem = panel?.kind === "item" && panel.id ? view.items.find((i) => i.id === panel.id) : undefined;
   const close = () => setPanel(null);
   const openLine = (l: Line) => setPanel({ kind: "line", id: l.item.id });
