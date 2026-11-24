@@ -1102,3 +1102,27 @@ button.kit-token.is-act:hover { background: color-mix(in srgb, var(--a-bg) 34%, 
 .money-lines .line-part .money-amt { font-size: 13px; color: var(--ink-2); }
 .items-row > .kit-mono.items-fix { border-color: var(--warn); color: var(--warn); }
 .items-row .money-amt { min-width: 84px; } /* so the bars end in one line */
+/* The item form, drawn: a wide switch for which way the money moves, marks on the choices, a large amount. */
+.kind-switch { display: grid; grid-template-columns: 1fr 1fr; align-self: stretch; border-radius: 12px; }
+.kind-switch button { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 44px; font-weight: 600; color: var(--ink-2); }
+.kind-switch button.is-active.is-out { background: var(--accent); color: var(--accent-ink); }
+.kind-switch button.is-active.is-in { background: var(--ok); color: var(--surface); }
+.sort-switch { margin-top: 0; }
+.sort-mark { display: inline-grid; place-items: center; font-size: 9px; opacity: .8; }
+.sort-mark.is-sum { font-size: 14px; font-style: italic; font-weight: 700; }
+.freq-mark { display: grid; place-items: center; min-width: 16px; height: 16px; border-radius: 5px; background: color-mix(in srgb, currentColor 16%, transparent); font-size: 9px; font-weight: 700; }
+.input-lead { font-size: 17px !important; font-weight: 600; }
+.amt-step.is-lead > input { min-height: 52px; font-size: 22px; font-weight: 700; letter-spacing: -.01em; }
+.amt-step.is-lead { grid-template-columns: minmax(120px, 180px) 1fr auto; }
+.amt-chart { display: flex; align-items: flex-end; gap: 3px; height: 36px; margin-bottom: 4px; }
+.amt-chart span { flex: 1; max-width: 56px; border-radius: 4px 4px 0 0; background: color-mix(in srgb, var(--accent) 28%, transparent); }
+.amt-chart span.is-now { background: var(--accent); }
+.loan-chart { height: 64px; border-radius: 10px 10px 0 0; background: var(--surface-2); overflow: hidden; margin-bottom: -16px; }
+.loan-chart svg { display: block; width: 100%; height: 100%; }
+.loan-chart polygon { fill: color-mix(in srgb, var(--accent) 22%, transparent); }
+.loan-chart polyline { fill: none; stroke: var(--accent); stroke-width: 2; }
+.loan-chart line { stroke: var(--ink-2); stroke-width: 1; stroke-dasharray: 3 3; }
+.loan-chart + .loan-facts { border-radius: 0 0 10px 10px; }
+.kit-mono.is-round { border-radius: 50%; }
+.form .chip strong { font-variant-numeric: tabular-nums; }
+.formula-keys .btn { flex: 1; min-width: 0; padding-left: 0; padding-right: 0; }
