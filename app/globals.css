@@ -767,7 +767,9 @@ p.outcome-reason { display: block; }
 /* A section or a budget as one small button that opens its list. */
 .yr-pick .select-btn { min-height: 30px; padding: 0 6px 0 10px; gap: 2px; border-radius: 999px; border-color: transparent; background: var(--surface-2); font-size: 13px; font-weight: 600; }
 .yr-pick .select-pop { min-width: 150px; }
-.yr-pick.is-left .select-pop { left: 0; right: auto; transform-origin: top left; }
+/* The section menu ends the bar: pushed right on its own, or sitting after the budget menu when there is one. */
+.yr-section { margin-left: auto; }
+.yr-narrow.yr-scope ~ .yr-section { margin-left: 0; }
 /* The grid scrolls inside itself, both ways, in what is left of the screen: the bar above it and the months' names stay where they are. */
 .yr { padding: 0; overflow: auto; max-height: calc(100dvh - var(--yr-above, 196px)); min-height: 240px; overscroll-behavior: contain; background: none; border-color: transparent; box-shadow: none; }
 .yr table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; font-variant-numeric: tabular-nums; }
