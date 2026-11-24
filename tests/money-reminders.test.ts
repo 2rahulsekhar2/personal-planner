@@ -51,4 +51,11 @@ describe("bill reminders", () => {
   it("tells nobody when an item has no recipients", () => {
     expect(plan([item({})], "2026-11-23T12:30:00Z", { recipients: () => [] })).toEqual([]);
   });
+  it("reminds for a computed bill at what it comes to, and not for its parts", () => {
+    const part = item({ id: "power", name: "Power", amount: 3000 });
+    const whole = item({ id: "home", name: "Home bills", amount: 0, formula: [{ t: "item", id: "power" }, { t: "op", v: "+" }, { t: "num", v: 500 }] });
+    const rows = plan([part, whole], "2026-11-23T12:30:00Z");
+    expect(rows.map((r) => r.money_ref)).toEqual(["bill:home:2026-11-24"]);
+    expect(rows[0].body).toContain("₹3,500");
+  });
 });

@@ -1,6 +1,6 @@
 import { DateTime } from "luxon";
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { expected, inr, linesDueOn, monthLines, type Increase, type MoneyEntry, type MoneyItem } from "./money";
+import { expected, inr, linesDueOn, monthLines, type Increase, type Line, type MoneyEntry, type MoneyItem } from "./money";
 
 export interface BillReminder {
   user_id: string;
@@ -28,6 +28,9 @@ export function billReminders(input: {
   now: DateTime;
 }): BillReminder[] {
   const out: BillReminder[] = [];
+  // Each month's lines once, over every item: a computed item needs its parts, and a part is not a bill of its own.
+  const months = new Map<string, Line[]>();
+  const linesIn = (ym: string) => months.get(ym) ?? months.set(ym, monthLines(input.items, input.entries, input.increases, ym)).get(ym)!;
   for (const item of input.items) {
     if (item.kind !== "expense") continue;
     for (const user_id of input.recipients(item)) {
@@ -35,7 +38,7 @@ export function billReminders(input: {
       if (!local.isValid) continue;
       for (const day of [local, local.plus({ days: 1 })]) {
         const date = day.toISODate()!;
-        const [line] = linesDueOn(monthLines([item], input.entries, input.increases, date.slice(0, 7)), date);
+        const [line] = linesDueOn(linesIn(date.slice(0, 7)).filter((l) => l.item.id === item.id), date);
         if (!line || line.paid) continue;
         const at = DateTime.max(day.set({ hour: BILL_HOUR, minute: 0, second: 0, millisecond: 0 }), input.now);
         const bank = item.bank_id ? input.bankName(item.bank_id) : undefined;
