@@ -474,7 +474,6 @@ function Year({ view, from, nowYm, canEdit, groupBy, onLine, onItem, onAdd }: {
                 <th scope="rowgroup">
                   <button className="yr-fold" aria-expanded={!shut.has(`${kind}:${g.id}`)} onClick={() => setShut((was) => { const next = new Set(was); if (!next.delete(`${kind}:${g.id}`)) next.add(`${kind}:${g.id}`); return next; })}>
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M6 9l6 6 6-6" /></svg>
-                    <span className={`kit-mono is-mini ${g.tone ? `act-${g.tone}` : "is-none"}`} aria-hidden>{g.name[0]?.toUpperCase()}</span>
                     <span>{g.name}</span>
                   </button>
                 </th>
@@ -580,6 +579,7 @@ function Banks({ view, lines, canEdit, who, onToggle, onOpen, onSetup }: { view:
           </div>
         </section>
       )}
+      <div className="bank-grid">
       {shown.map(({ b, pos, balance, tone, short, out }) => {
         const top = Math.max(balance + pos.incomeDue, pos.expenseDue, 1);
         const h = (n: number) => `${Math.max(0, (n / top) * 100)}%`;
@@ -620,6 +620,7 @@ function Banks({ view, lines, canEdit, who, onToggle, onOpen, onSetup }: { view:
           <Lines flat lines={stray} onToggle={onToggle} onOpen={onOpen} locked={!canEdit} empty="" />
         </section>
       )}
+      </div>
     </>
   );
 }
@@ -1111,7 +1112,7 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
 
       <main className={`main ${panel ? "has-panel" : ""}`}>
         <section className="content">
-          <div className={`page ${tab === "year" ? "is-wide" : ""}`}>
+          <div className={`page ${tab === "year" ? "is-wide" : "is-roomy"}`}>
             {/* One bar on every tab, laid out as on the Time side: arrows and the months on show, then the sections at the right end
                 (on a phone, one button that opens their list). Whose budget sits on its own line under it. */}
             <div className="toolbar yr-bar">
@@ -1129,7 +1130,9 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
             )}
 
             {tab === "month" && (
-              <>
+              <div className="month-cols">
+                {/* On a wide screen: where the month stands and its income at the side, the expenses taking the rest. */}
+                <div className="month-side">
                 <section className={`card month-sum ${left < 0 ? "is-short" : ""}`}>
                   <p className="sum-left"><strong>{left < 0 ? "− " : ""}{inr(Math.abs(left))}</strong> {left < 0 ? "short" : "left"}</p>
                   {flow("In", income, "is-in", "received")}
@@ -1151,9 +1154,12 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
 
                 {head("Income", "income")}
                 <Lines onReorder={onReorder} groupBy={groupBy} lines={lines.filter((l) => l.item.kind === "income")} meta={new Set(lines.filter((l) => l.item.kind === "income").map((l) => l.item.type_id)).size > 1 ? bankOnly : meta} onToggle={togglePaid} onOpen={openLine} locked={!canEdit} empty={`No income in ${monthLabel(ym)}.`} />
+                </div>
+                <div className="month-main">
                 {head("Expenses", "expense")}
                 <Lines onReorder={onReorder} groupBy={groupBy} lines={lines.filter((l) => l.item.kind === "expense")} meta={new Set(lines.filter((l) => l.item.kind === "expense").map((l) => l.item.type_id)).size > 1 ? bankOnly : meta} onToggle={togglePaid} onOpen={openLine} locked={!canEdit} empty={`No expenses in ${monthLabel(ym)}.`} />
-              </>
+                </div>
+              </div>
             )}
 
             {tab === "year" && (

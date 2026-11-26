@@ -800,6 +800,30 @@ p.outcome-reason { display: block; }
 /* The year: a row an item, a column a month. A filled cell is a month the item falls due, in its type's colour:
    solid once paid or received, faint while still to come. The names stay put while the months scroll under them. */
 .page.is-wide { max-width: 1360px; }
+/* The other Money tabs use a wide screen too, each in its own way, while no panel is open beside them.
+   Below that the wrappers drop out and the page is one column as before. (Not a container query: the content area
+   holds menus placed with position: fixed, which containment would pin to it.) */
+.month-cols, .month-side, .month-main, .bank-grid { display: contents; }
+@media (min-width: 1024px) {
+  .main:not(.has-panel) .page.is-roomy { max-width: 1360px; }
+  /* The month: where it stands and its income at the side, held in view; the expenses, the long list, take the rest. */
+  .main:not(.has-panel) .month-cols { display: grid; grid-template-columns: minmax(320px, 380px) minmax(0, 1fr); gap: 24px; align-items: start; }
+  .main:not(.has-panel) .month-side, .main:not(.has-panel) .month-main { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+  .main:not(.has-panel) .month-side { position: sticky; top: 12px; }
+  /* Banks two by two, and items two rows abreast; the rule between rows runs on in each column. */
+  .main:not(.has-panel) .bank-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; align-items: start; }
+  .main:not(.has-panel) .items-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .main:not(.has-panel) .items-list li, .main:not(.has-panel) .items-list li + li { border-top: 1px solid var(--line); margin-top: -1px; }
+  .main:not(.has-panel) .items-list li:nth-child(odd) { border-right: 1px solid var(--line); }
+  /* Setup's sections in two columns, each kept whole. */
+  .main:not(.has-panel) .kit-board { display: block; columns: 2; column-gap: 32px; }
+  .main:not(.has-panel) .kit-board > .kit { break-inside: avoid; margin-bottom: 28px; }
+}
+@media (min-width: 1400px) {
+  /* Room enough for the expense groups to sit in two columns beside the income. */
+  .main:not(.has-panel) .money-groups { display: block; columns: 2; column-gap: 10px; }
+  .main:not(.has-panel) .money-groups > .money-group { break-inside: avoid; margin-bottom: 10px; }
+}
 /* One bar above the page, as on the Time side: arrows and the months on show on the left, the sections on the right.
    Whose budget is the line of chips under it. */
 .yr-bar { margin: 0; gap: 6px; }
