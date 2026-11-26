@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { carried, carryOver, evalFormula, formulaLoops, withParts, type FormulaToken, loanEmi, loanNow, loanSchedule, amountIn, amountOn, amountPeriods, bankPosition, byPerson, byType, forecast, linesDueOn, waitingOn, datesInMonth, monthLines, parseAmount, shiftMonth, totals, yearRows, type MoneyEntry, type MoneyItem } from "@/lib/money";
+import { byPlace, movedTo, oneAName } from "@/lib/money";
 
 const item = (over: Partial<MoneyItem>): MoneyItem => ({
   id: "i1", kind: "expense", name: "Wifi bill", amount: 1000, freq: "monthly", start_date: "2026-01-15", end_date: null,
@@ -348,5 +349,48 @@ describe("what a month leaves open", () => {
     expect(open.map((l) => l.item.id).sort()).toEqual(["gift", "rent"]);
     const rentLine = open.find((l) => l.item.id === "rent")!;
     expect(carried(rentLine, "2026-10", "2026-11-03")).toMatchObject({ name: "Rent (October)", amount: 1200, freq: "once", start_date: "2026-11-03", end_date: null, increase_id: null });
+  });
+});
+
+describe("lines moved by hand", () => {
+  const line = (id: string, sort_order?: number | null) => ({ item: { id, sort_order } });
+  it("puts placed lines first by their place, and leaves the rest as they came", () => {
+    expect(byPlace([line("a"), line("b", 1), line("c", null), line("d", 0)]).map((l) => l.item.id)).toEqual(["d", "b", "a", "c"]);
+    expect(byPlace([line("a"), line("b")]).map((l) => l.item.id)).toEqual(["a", "b"]);
+  });
+  it("moves one id to a place, never past either end", () => {
+    expect(movedTo(["a", "b", "c"], "c", 0)).toEqual(["c", "a", "b"]);
+    expect(movedTo(["a", "b", "c"], "a", 1)).toEqual(["b", "a", "c"]);
+    expect(movedTo(["a", "b", "c"], "a", 9)).toEqual(["b", "c", "a"]);
+    expect(movedTo(["a", "b", "c"], "b", -3)).toEqual(["b", "a", "c"]);
+  });
+});
+
+describe("items offered one a name", () => {
+  const item = (name: string, start_date: string, freq: "once" | "monthly" = "once") => ({ name, freq, start_date, end_date: null });
+  it("keeps the one due this month, else the one that started last", () => {
+    const got = oneAName([item("Temple", "2026-09-05"), item("Temple", "2026-11-05"), item("temple ", "2026-12-05"), item("Rent", "2025-01-01", "monthly"), item("Car", "2026-01-10"), item("Car", "2026-06-10")], "2026-11");
+    expect(got.map((i) => `${i.name}|${i.start_date}`)).toEqual(["Temple|2026-11-05", "Rent|2025-01-01", "Car|2026-06-10"]);
+  });
+});
+
+describe("a formula over an item that comes now and then", () => {
+  const o = (v: "+" | "-" | "*" | "/"): FormulaToken => ({ t: "op", v });
+  const temple = (id: string, start_date: string, amount: number) => item({ id, name: "Temple", freq: "once", start_date, amount });
+  const jan = temple("t1", "2026-01-05", 5000), mar = temple("t3", "2026-03-05", 8000);
+  const rent = item({ id: "rent", name: "Rent", amount: 20000, start_date: "2026-01-01" });
+  const home = item({ id: "home", name: "Home", amount: 0, start_date: "2026-01-01", formula: [{ t: "item", id: "rent" }, o("+"), { t: "item", id: "t1" }] });
+  const all = [jan, mar, rent, home];
+
+  it("uses what the item of that name comes to in each month", () => {
+    expect(monthLines(all, [], [], "2026-01").map((l) => [l.item.id, l.budget])).toEqual([["home", 25000]]);
+    expect(monthLines(all, [], [], "2026-02").map((l) => [l.item.id, l.budget])).toEqual([["home", 20000]]);
+    expect(monthLines(all, [], [], "2026-03").map((l) => [l.item.id, l.budget])).toEqual([["home", 28000]]);
+    expect(monthLines(all, [], [], "2026-03")[0].parts?.map((p) => p.item.id)).toEqual(["rent", "t3"]);
+  });
+
+  it("leaves a one-time item of another bank or name as a line of its own", () => {
+    const other = item({ id: "x", name: "Temple", freq: "once", start_date: "2026-03-09", amount: 700, bank_id: "b2" });
+    expect(monthLines([...all, other], [], [], "2026-03").map((l) => l.item.id).sort()).toEqual(["home", "x"]);
   });
 });

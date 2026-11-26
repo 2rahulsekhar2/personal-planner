@@ -3,7 +3,7 @@ import { useState } from "react";
 import { DateTime } from "luxon";
 import type { PlannerCtx } from "./usePlanner";
 import type { Appointment } from "@/lib/types";
-import { reminderLabel as labelFor } from "@/lib/types";
+import { reminderLabel as labelFor, tidyReminders } from "@/lib/types";
 import { fmtRange } from "@/lib/time";
 import { isOverlapError } from "@/lib/conflicts";
 import type { Circle } from "@/lib/circles";
@@ -62,7 +62,8 @@ export default function AppointmentDetails({
   const by = sharedIn?.circle_members.find((m) => m.user_id === appt.user_id)?.email;
   const p = appt.place_id ? placeById.get(appt.place_id) : null;
   const start = DateTime.fromISO(appt.starts_at).setZone(tz);
-  const reminderLabel = labelFor(appt.reminder_minutes);
+  // Every reminder, as one line: "1 hour before, 1 day before".
+  const reminderLabel = tidyReminders([appt.reminder_minutes, ...(appt.extra_reminder_minutes ?? [])]).map(labelFor).join(", ");
 
   // Listed as going by the creator: my own row, where my reply lives.
   const myPart = appt.participants?.find((x) => x.user_id === ctx.userId);
@@ -182,7 +183,7 @@ export default function AppointmentDetails({
           )}
         </dd>
         <dt><Icon d="M6 9.5a6 6 0 0 1 12 0c0 4.5 2 5.5 2 6.5H4c0-1 2-2 2-6.5zM10 19.5a2 2 0 0 0 4 0" /><span className="sr-only">Reminder</span></dt>
-        <dd>{appt.status === "cancelled" ? <span className="muted">Reminder stopped (cancelled)</span> : appt.reminder_minutes === null ? <span className="muted">No reminder</span> : `Reminder ${reminderLabel.toLowerCase()}`}</dd>
+        <dd>{appt.status === "cancelled" ? <span className="muted">Reminder stopped (cancelled)</span> : !reminderLabel ? <span className="muted">No reminder</span> : `Reminder ${reminderLabel.toLowerCase()}`}</dd>
         {appt.team && (<><dt><Icon d="M8.5 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM3 19a5.5 5.5 0 0 1 11 0M16 11a2.5 2.5 0 1 0 0-5M17 14.5a4.5 4.5 0 0 1 4 4.5" /><span className="sr-only">Team</span></dt><dd>{appt.team}</dd></>)}
         {sharedIn && (appt.participants?.length ?? 0) > 0 && (
           <>

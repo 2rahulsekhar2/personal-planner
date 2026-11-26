@@ -1,9 +1,10 @@
 "use client";
 import { DateTime } from "luxon";
 import type { PlannerCtx } from "./usePlanner";
-import { fmtRange, fmtShortTime, isTaskOverdue, relativeDayLabel, weekFromToday, todayISO } from "@/lib/time";
+import { fmtRange, fmtShortTime, isTaskOverdue, relativeDayLabel, weekFromToday } from "@/lib/time";
 import { TaskChip, visibleAppointments } from "./WeekView";
 import DayBar from "./DayBar";
+import { MonthGrid } from "./DayPicker";
 
 export default function WeekSidebar({
   ctx, day, setDay, onOpen, onOpenTask,
@@ -16,11 +17,8 @@ export default function WeekSidebar({
 }) {
   const { tz, typeById, tasks, types } = ctx;
   const d = DateTime.fromISO(day, { zone: tz });
-  const today = todayISO(tz);
   const ws = weekFromToday(day, tz);
   const we = ws.plus({ days: 7 });
-  const gridStart = d.startOf("month").startOf("week");
-  const cells = Array.from({ length: 42 }, (_, i) => gridStart.plus({ days: i }));
 
   const dayStart = d.startOf("day");
   const dayEnd = dayStart.plus({ days: 1 });
@@ -39,23 +37,7 @@ export default function WeekSidebar({
             <button className="icon-btn" aria-label="Next month" onClick={() => setDay(d.plus({ months: 1 }).toISODate()!)}>›</button>
           </div>
         </div>
-        <div className="mini-grid">
-          {cells.slice(0, 7).map((x) => <span key={x.weekday} className="mini-dow" aria-hidden>{x.toFormat("ccccc")}</span>)}
-          {cells.map((x) => {
-            const iso = x.toISODate()!;
-            return (
-              <button
-                key={iso}
-                className={`mini-day ${x.month !== d.month ? "is-out" : ""} ${x >= ws && x < we ? "is-week" : ""} ${iso === today ? "is-today" : ""}`}
-                aria-label={x.toFormat("cccc d LLLL")}
-                aria-current={iso === today ? "date" : undefined}
-                onClick={() => setDay(iso)}
-              >
-                {x.day}
-              </button>
-            );
-          })}
-        </div>
+        <MonthGrid month={d} tz={tz} mark={(x) => (x >= ws && x < we ? "is-week" : "")} onPick={setDay} />
       </section>
 
       <section className="card">

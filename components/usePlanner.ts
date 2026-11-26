@@ -28,6 +28,8 @@ export function usePlanner() {
   const [people, setPeople] = useState(false);
   // True once the database also has busy-only sharing and replies (0009_roles.sql).
   const [replies, setReplies] = useState(false);
+  // True once the database can hold several reminders on one appointment or task (0023_multi_reminders.sql).
+  const [manyReminders, setManyReminders] = useState(false);
   const [profile, setProfile] = useState<Profile | null>(null);
   const [types, setTypes] = useState<ActivityType[]>([]);
   const [places, setPlaces] = useState<Place[]>([]);
@@ -63,10 +65,11 @@ export function usePlanner() {
       supabase.from("profiles").select("user_id, time_zone, default_reminder_minutes, show_cancelled").maybeSingle(),
       supabase.from("activity_types").select("id, user_id, name, color, archived_at").order("name"),
       supabase.from("places").select("id, user_id, name, maps_url, notes, archived_at").order("name"),
-      loadTasks(`${TASK_FIELDS}, circle_id, assignee_id, completed_by, series_id`),
+      loadTasks(`${TASK_FIELDS}, circle_id, assignee_id, completed_by, series_id, extra_notify_at`),
     ]);
     // A later migration that has not been run makes the newest shape fail: step back one migration at a time.
     let tk = firstTasks;
+    if (tk.error) tk = await loadTasks(`${TASK_FIELDS}, circle_id, assignee_id, completed_by, series_id`);
     if (tk.error) tk = await loadTasks(`${TASK_FIELDS}, circle_id, assignee_id, completed_by`);
     if (tk.error) tk = await loadTasks(`${TASK_FIELDS}, circle_id`);
     if (tk.error) tk = await loadTasks(TASK_FIELDS);
@@ -109,6 +112,7 @@ export function usePlanner() {
       // relation), so on any error step back one migration at a time; the calendar must load either way. A real
       // outage fails every shape and is reported below.
       const shapes = [
+        `${APPT_FIELDS}, extra_reminder_minutes, outcome, outcome_reason, custom_activity, custom_place, circle_id, busy_only, participants:appointment_participants(user_id, reply)`,
         `${APPT_FIELDS}, outcome, outcome_reason, custom_activity, custom_place, circle_id, busy_only, participants:appointment_participants(user_id, reply)`,
         `${APPT_FIELDS}, outcome, outcome_reason, custom_activity, custom_place, circle_id, participants:appointment_participants(user_id)`,
         `${APPT_FIELDS}, outcome, outcome_reason, custom_activity, custom_place, circle_id`,
@@ -119,16 +123,17 @@ export function usePlanner() {
       let shape = 0;
       let { data, error } = await query(shapes[0]);
       while (error && shape < shapes.length - 1) ({ data, error } = await query(shapes[++shape]));
-      setReplies(shape === 0 && !error);
-      setPeople(shape <= 1 && !error);
-      setSharing(shape <= 2 && !error);
+      setManyReminders(shape === 0 && !error);
+      setReplies(shape <= 1 && !error);
+      setPeople(shape <= 2 && !error);
+      setSharing(shape <= 3 && !error);
       if (error) {
         setLoadError(error.message);
         return;
       }
       // Other members' busy-only appointments are not readable rows: a function hands over their hours, and each
       // becomes a block that says "Busy" and nothing else.
-      const blocks = shape === 0 ? await supabase.rpc("circle_busy_blocks", { p_from: r.from, p_to: r.to }) : null;
+      const blocks = shape <= 1 ? await supabase.rpc("circle_busy_blocks", { p_from: r.from, p_to: r.to }) : null;
       const busy = ((blocks?.data ?? []) as Pick<Appointment, "id" | "user_id" | "circle_id" | "starts_at" | "ends_at">[]).map((b): Appointment => ({
         ...b, busy: true, title: "Busy", status: "confirmed", activity_type_id: null, place_id: null, series_id: null, team: null, notes: null, reminder_minutes: null,
       }));
@@ -188,6 +193,7 @@ export function usePlanner() {
     sharing,
     people,
     replies,
+    manyReminders,
     profile,
     setProfile,
     tz,

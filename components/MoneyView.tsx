@@ -1,5 +1,7 @@
 "use client";
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useDismiss } from "./useDismiss";
 import { DateTime } from "luxon";
 import type { PlannerCtx } from "./usePlanner";
 import type { MoneyCtx } from "./useMoney";
@@ -7,7 +9,7 @@ import Panel from "./Panel";
 import Select from "./Select";
 import MoneySetup, { TONES } from "./MoneySetup";
 import { MoneyItemForm, MoneyLineForm } from "./MoneyItemForm";
-import { amountOn, carried, carryOver, loanNow, bankPosition, byPerson, byType, expected, forecast, formulaItems, FREQ_LABELS, inr, monthLabel, monthLines, partIds, shiftMonth, totals, waitingOn, withParts, yearRows, type Line, type MoneyFreq, type MoneyItem, type MoneyKind, type Proposal } from "@/lib/money";
+import { amountOn, byPlace, movedTo, carried, carryOver, loanNow, bankPosition, byPerson, byType, expected, forecast, formulaItems, FREQ_LABELS, inr, monthLabel, monthLines, partIds, shiftMonth, totals, waitingOn, withParts, yearRows, type Line, type MoneyFreq, type MoneyItem, type MoneyKind, type Proposal } from "@/lib/money";
 import { canAdd, isCurrent, type Circle } from "@/lib/circles";
 import { todayISO } from "@/lib/time";
 
@@ -74,8 +76,24 @@ const dueLabel = (l: Line) => {
 };
 
 // What is still open comes first, then what is settled, then what was skipped; by date within each.
+// A line moved by hand keeps the place it was given instead, ahead of the ones never moved.
 const lineRank = (l: Line) => (l.skipped ? 2 : l.paid ? 1 : 0);
-const inOrder = (lines: Line[]) => [...lines].sort((a, b) => lineRank(a) - lineRank(b) || a.dates[0].localeCompare(b.dates[0]) || a.item.name.localeCompare(b.item.name));
+const inOrder = (lines: Line[]) => byPlace([...lines].sort((a, b) => lineRank(a) - lineRank(b) || a.dates[0].localeCompare(b.dates[0]) || a.item.name.localeCompare(b.item.name)));
+
+/** Right-click on a line: the one thing to do with it there. Drawn at the pointer, outside the page flow. */
+function MoveMenu({ x, y, onMove, onClose }: { x: number; y: number; onMove: () => void; onClose: () => void }) {
+  const ref = useDismiss(true, onClose);
+  return createPortal(
+    <div ref={ref} className="pop-menu line-menu" role="menu" style={{ left: Math.max(8, Math.min(x, window.innerWidth - 168)), top: Math.max(8, Math.min(y, window.innerHeight - 64)) }}>
+      <button className="add-item" role="menuitem" autoFocus onClick={onMove}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M12 4v16M8 8l4-4 4 4M8 16l4 4 4-4" /></svg>
+        Move
+      </button>
+    </div>,
+    document.body,
+  );
+}
+
 /** The one day every line falls on, when they all share it: then the day is said once, not on every row. */
 const sharedDay = (lines: Line[]) => (lines.length > 1 && lines.every((l) => l.dates.length === 1 && l.dates[0] === lines[0].dates[0]) ? lines[0].dates[0] : null);
 
@@ -85,17 +103,89 @@ const sharedDay = (lines: Line[]) => (lines.length > 1 && lines.every((l) => l.d
  * `groupBy`: gather the lines under their type, each group with its own total and progress. A group that is all
  * settled starts folded to its heading. With fewer than two types in the list there is nothing to group.
  */
-function Lines({ lines, meta, onToggle, onOpen, empty, locked, flat, groupBy }: {
+function Lines({ lines, meta, onToggle, onOpen, empty, locked, flat, groupBy, onReorder }: {
   lines: Line[]; meta?: (l: Line) => React.ReactNode; onToggle: (l: Line) => void; onOpen: (l: Line) => void; empty: string; locked?: boolean; flat?: boolean;
   groupBy?: (typeId: string | null) => { name: string; tone: string | null };
+  // Given, the lines can be moved within their list: held and dragged on a touch screen; right-click, Move, on a computer.
+  onReorder?: (ids: string[]) => Promise<void> | void;
 }) {
   const [flipped, setFlipped] = useState<string[]>([]); // groups whose fold was changed by hand
+  // The line picked up, its list's order as it stands, and as it was when picked up.
+  const [move, setMove] = useState<{ id: string; ids: string[]; from: string[] } | null>(null);
+  const [menu, setMenu] = useState<{ id: string; ids: string[]; x: number; y: number } | null>(null);
+  const press = useRef<{ timer: number; x: number; y: number } | null>(null); // a touch being held, not yet long enough
+  const drag = useRef(false); // a finger or button is down on the line picked up
+  const swallow = useRef(false); // the click that ends a move must not open or tick the line
+  const closeMenu = useCallback(() => setMenu(null), []);
+
+  // While a line is picked up the whole page follows the pointer: the row is rebuilt as it moves, so it cannot hold the pointer itself.
+  useEffect(() => {
+    if (!move) return;
+    const finish = async (keep: boolean) => {
+      drag.current = false;
+      swallow.current = true;
+      setTimeout(() => { swallow.current = false; }, 350);
+      if (keep && move.ids.join() !== move.from.join()) await onReorder?.(move.ids);
+      setMove(null);
+    };
+    const step = (by: number) => setMove({ ...move, ids: movedTo(move.ids, move.id, move.ids.indexOf(move.id) + by) });
+    const onMove = (e: PointerEvent) => {
+      if (!drag.current) return;
+      // Its new place: after every other line of its list whose middle the pointer has passed.
+      const list = document.querySelector(`li[data-id="${move.id}"]`)?.parentElement;
+      if (!list) return;
+      const others = [...list.querySelectorAll<HTMLElement>(":scope > li[data-id]")].filter((li) => li.dataset.id !== move.id);
+      const to = others.filter((li) => { const r = li.getBoundingClientRect(); return e.clientY > r.top + r.height / 2; }).length;
+      const ids = movedTo(move.ids, move.id, to);
+      if (ids.join() !== move.ids.join()) setMove({ ...move, ids });
+    };
+    const onUp = (e: PointerEvent) => { if (drag.current && (e.pointerType !== "mouse" || move.ids.join() !== move.from.join())) finish(true); else drag.current = false; };
+    const onCancel = () => { if (drag.current) finish(false); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") finish(false);
+      else if (e.key === "Enter") { e.preventDefault(); finish(true); }
+      else if (e.key === "ArrowUp" || e.key === "ArrowDown") { e.preventDefault(); step(e.key === "ArrowUp" ? -1 : 1); }
+    };
+    const noScroll = (e: TouchEvent) => e.preventDefault(); // the page must not scroll under a held finger
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    document.addEventListener("pointercancel", onCancel);
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("touchmove", noScroll, { passive: false });
+    return () => {
+      document.removeEventListener("pointermove", onMove);
+      document.removeEventListener("pointerup", onUp);
+      document.removeEventListener("pointercancel", onCancel);
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("touchmove", noScroll);
+    };
+  }, [move, onReorder]);
+
+  const letGo = () => { if (press.current) { clearTimeout(press.current.timer); press.current = null; } };
+  // A list's lines as drawn: by hand while one of them is being moved, else in their usual order.
+  const ordered = (own: Line[]) => (move && own.some((l) => l.item.id === move.id) ? move.ids.flatMap((id) => own.filter((l) => l.item.id === id)) : inOrder(own));
+  // What makes a row movable. `ids`: its list, in the order drawn.
+  const grip = (l: Line, ids: string[]): React.LiHTMLAttributes<HTMLLIElement> & { "data-id"?: string } => (!onReorder || ids.length < 2 ? {} : {
+    "data-id": l.item.id,
+    onPointerDown: (e) => {
+      if (move?.id === l.item.id) { if (!(e.target as HTMLElement).closest(".move-keys")) drag.current = true; return; }
+      if (move || e.pointerType === "mouse") return;
+      const { clientX: x, clientY: y } = e;
+      press.current = { x, y, timer: window.setTimeout(() => { press.current = null; drag.current = true; navigator.vibrate?.(12); setMove({ id: l.item.id, ids, from: ids }); }, 450) };
+    },
+    onPointerMove: (e) => { if (press.current && Math.hypot(e.clientX - press.current.x, e.clientY - press.current.y) > 8) letGo(); },
+    onPointerUp: letGo,
+    onPointerCancel: letGo,
+    onContextMenu: (e) => { e.preventDefault(); if (!move && !press.current && !drag.current) setMenu({ id: l.item.id, ids, x: e.clientX, y: e.clientY }); },
+    onClickCapture: (e) => { if ((move || swallow.current) && !(e.target as HTMLElement).closest(".move-keys")) { e.preventDefault(); e.stopPropagation(); } },
+  });
+  const moveMenu = menu && <MoveMenu x={menu.x} y={menu.y} onClose={closeMenu} onMove={() => { setMove({ id: menu.id, ids: menu.ids, from: menu.ids }); setMenu(null); }} />;
   if (!lines.length) return <p className="empty card">{empty}</p>;
   const verb = lines[0].item.kind === "expense" ? "paid" : "received";
   // `noLeaf`: every line around this one falls on the same day, which is said once above them instead.
-  const row = (l: Line, noLeaf: boolean) => (
+  const row = (l: Line, noLeaf: boolean, ids: string[]) => (
     <Fragment key={l.item.id}>
-    <li className={`task-row ${l.paid ? "is-done" : ""} ${l.skipped ? "is-skipped" : ""}`}>
+    <li className={`task-row ${l.paid ? "is-done" : ""} ${l.skipped ? "is-skipped" : ""} ${move?.id === l.item.id ? "is-moving" : ""}`} {...grip(l, ids)}>
       <button className={`task-check ${l.paid ? "is-checked" : ""}`} disabled={l.skipped || locked} aria-pressed={l.paid} aria-label={`${l.item.name}: ${l.paid ? `mark not ${verb}` : `mark ${verb}`}`} onClick={() => onToggle(l)}>
         {l.paid && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M5 12.5l4.5 4.5L19 7.5" /></svg>}
       </button>
@@ -115,6 +205,14 @@ function Lines({ lines, meta, onToggle, onOpen, empty, locked, flat, groupBy }: 
         {/* Under a rupee apart is rounding from an import, not a change worth pointing at. */}
         {l.actual === null && Math.abs(l.budget - l.rule) >= 1 && <span>usually {inr(l.rule)}</span>}
       </span>
+      {/* Picked up with the mouse: step it up or down, then set it down. A finger drags it instead. */}
+      {move?.id === l.item.id && (
+        <span className="move-keys">
+          <button type="button" className="icon-btn" aria-label="Move up" title="Move up" disabled={ids[0] === l.item.id} onClick={() => setMove({ ...move, ids: movedTo(move.ids, move.id, move.ids.indexOf(move.id) - 1) })}>↑</button>
+          <button type="button" className="icon-btn" aria-label="Move down" title="Move down" disabled={ids[ids.length - 1] === l.item.id} onClick={() => setMove({ ...move, ids: movedTo(move.ids, move.id, move.ids.indexOf(move.id) + 1) })}>↓</button>
+          <button type="button" className="icon-btn" aria-label="Done moving" title="Done" onClick={async () => { if (move.ids.join() !== move.from.join()) await onReorder?.(move.ids); setMove(null); }}>✓</button>
+        </span>
+      )}
     </li>
     {/* A computed item's parts, under it: each opens its own month, where what it really came to is recorded. */}
     {withParts(l.parts ?? []).map((p) => (
@@ -130,7 +228,12 @@ function Lines({ lines, meta, onToggle, onOpen, empty, locked, flat, groupBy }: 
   );
 
   const typeIds = [...new Set(lines.map((l) => l.item.type_id))];
-  if (!groupBy || typeIds.length < 2) return <ul className={`task-list money-lines ${flat ? "is-flat" : "card"}`}>{inOrder(lines).map((l) => row(l, !!sharedDay(lines)))}</ul>;
+  const list = (own: Line[], noLeaf: boolean, cls: string) => {
+    const shown = ordered(own);
+    const ids = shown.map((l) => l.item.id);
+    return <ul className={`task-list money-lines ${cls}`}>{shown.map((l) => row(l, noLeaf, ids))}</ul>;
+  };
+  if (!groupBy || typeIds.length < 2) return <>{list(lines, !!sharedDay(lines), flat ? "is-flat" : "card")}{moveMenu}</>;
 
   const groups = typeIds.map((id) => {
     const own = lines.filter((l) => l.item.type_id === id);
@@ -161,10 +264,11 @@ function Lines({ lines, meta, onToggle, onOpen, empty, locked, flat, groupBy }: 
               </span>
               <svg className="money-group-fold" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M6 9.5l6 6 6-6" /></svg>
             </button>
-            {open && <ul className="task-list money-lines is-flat">{inOrder(g.own).map((l) => row(l, !!day))}</ul>}
+            {open && list(g.own, !!day, "is-flat")}
           </section>
         );
       })}
+      {moveMenu}
     </div>
   );
 }
@@ -891,6 +995,15 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
     await money.reload();
     ctx.toast("ok", done);
   };
+  // Each line of a rearranged list is given its place. A place belongs to the item, so it holds in every month.
+  // shortcut: one request a line, fine for a list of a few dozen; make it one database function if lists grow long.
+  const reorder = async (ids: string[]) => {
+    const res = await Promise.all(ids.map((id, i) => supabase.from("money_items").update({ sort_order: i }).eq("id", id)));
+    const failed = res.find((r) => r.error)?.error;
+    if (failed) ctx.toast("error", `Couldn’t save the order: ${failed.message}`);
+    await money.reload();
+  };
+  const onReorder = canEdit && money.ordering ? reorder : undefined;
   const togglePaid = (l: Line) => {
     const word = l.item.kind === "expense" ? "paid" : "received";
     return write(supabase.from("money_entries").upsert({ item_id: l.item.id, month: `${ym}-01`, paid_at: l.paid ? null : new Date().toISOString() }), l.paid ? `${l.item.name} marked not ${word}` : `${l.item.name} ${word}`);
@@ -930,6 +1043,11 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
   const moveAsked = (l: Line) => money.proposals.some((p) => p.status === "pending" && p.action === "change" && p.item_id === l.item.id && p.payload.start_date?.slice(0, 7) === nowYm);
 
   // What sits in the middle of the bar: the month and its arrows, or on the year tab the twelve months and theirs.
+  // A month in the bar: its name, with the year small beneath. `long` spells the month out where there is room.
+  const stamp = (m: string, long = false) => {
+    const d = DateTime.fromISO(`${m}-01`);
+    return <span className="range-end">{long ? <><span className="yr-wide">{d.toFormat("LLLL")}</span><span className="yr-narrow">{d.toFormat("LLL")}</span></> : d.toFormat("LLL")}<small>{d.toFormat("yyyy")}</small></span>;
+  };
   const monthMid = (
     <>
       <div className="toolbar-group">
@@ -937,8 +1055,8 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
         <button className="btn" onClick={() => setPicked(shiftMonth(ym, 1))} aria-label="Next month">›</button>
       </div>
       <h1 className="toolbar-title" aria-label={monthLabel(ym)}>
-        <span className="yr-wide">{monthLabel(ym)}</span>
-        <span className="yr-narrow">{DateTime.fromISO(`${ym}-01`).toFormat("LLL yyyy")}</span>
+        {/* As on the Time side: the year small under the month, so the bar keeps its width from month to month. */}
+        <span className="range-pick">{stamp(ym, true)}</span>
       </h1>
       {ym !== nowYm && <button className="btn btn-sm" onClick={() => setPicked(null)}><span className="yr-wide">This month</span><span className="yr-narrow">Now</span></button>}
     </>
@@ -950,8 +1068,7 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
         <button className="btn" onClick={() => setYearPick(shiftMonth(yearFrom, 12))} aria-label="Next 12 months">›</button>
       </div>
       <h1 className="toolbar-title" aria-label={`${monthLabel(yearFrom)} to ${monthLabel(shiftMonth(yearFrom, 11))}`}>
-        <span className="yr-wide">{DateTime.fromISO(`${yearFrom}-01`).toFormat("LLL yyyy")} to {DateTime.fromISO(`${shiftMonth(yearFrom, 11)}-01`).toFormat("LLL yyyy")}</span>
-        <span className="yr-narrow">{DateTime.fromISO(`${yearFrom}-01`).toFormat("LLL yy")} – {DateTime.fromISO(`${shiftMonth(yearFrom, 11)}-01`).toFormat("LLL yy")}</span>
+        <span className="range-pick">{stamp(yearFrom)}<span aria-hidden>–</span>{stamp(shiftMonth(yearFrom, 11))}</span>
       </h1>
       {yearFrom !== nowYm && <button className="btn btn-sm" onClick={() => setYearPick(null)}><span className="yr-wide">This month</span><span className="yr-narrow">Now</span></button>}
     </>
@@ -990,14 +1107,14 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
       <main className={`main ${panel ? "has-panel" : ""}`}>
         <section className="content">
           <div className={`page ${tab === "year" ? "is-wide" : ""}`}>
-            {/* One bar on every tab. Wide: the tabs and chips. On a phone each folds into a button that opens its list, at the right end. */}
+            {/* One bar on every tab, laid out as on the Time side: arrows and the months on show, then the sections at the right end
+                (on a phone, one button that opens their list). Whose budget sits on its own line under it. */}
             <div className="toolbar yr-bar">
-              <div className="yr-wide">{tabStrip}</div>
               {tab === "year" ? yearMid : tab === "month" || tab === "banks" || tab === "insights" ? monthMid : null}
-              <div className="yr-wide yr-scope">{scopeBar}</div>
-              {families.length > 0 && <div className="yr-narrow yr-pick yr-scope" aria-label="Whose budget"><Select id="money-scope" value={sid ?? ""} options={[{ value: "", label: "Mine" }, ...families.map((c) => ({ value: c.id, label: c.name }))]} onChange={(v) => pick(v || null)} /></div>}
+              <div className="yr-wide yr-section">{tabStrip}</div>
               <div className="yr-narrow yr-pick yr-section" aria-label="Money section"><Select id="money-section" value={tab} options={TABS} onChange={(v) => setTab(v as Tab)} /></div>
             </div>
+            {scopeBar}
             {money.error && <div className="alert alert-error" role="alert">Couldn’t load your budget: {money.error}. <button className="link" onClick={() => money.reload()}>Retry</button></div>}
 
             {open.length > 0 && (
@@ -1028,9 +1145,9 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
                 {scope && <Requests ctx={ctx} money={money} scope={scope} canEdit={canEdit} onAgain={(p) => setPanel({ kind: "item", id: p.item_id ?? undefined, again: p })} />}
 
                 {head("Income", "income")}
-                <Lines groupBy={groupBy} lines={lines.filter((l) => l.item.kind === "income")} meta={new Set(lines.filter((l) => l.item.kind === "income").map((l) => l.item.type_id)).size > 1 ? bankOnly : meta} onToggle={togglePaid} onOpen={openLine} locked={!canEdit} empty={`No income in ${monthLabel(ym)}.`} />
+                <Lines onReorder={onReorder} groupBy={groupBy} lines={lines.filter((l) => l.item.kind === "income")} meta={new Set(lines.filter((l) => l.item.kind === "income").map((l) => l.item.type_id)).size > 1 ? bankOnly : meta} onToggle={togglePaid} onOpen={openLine} locked={!canEdit} empty={`No income in ${monthLabel(ym)}.`} />
                 {head("Expenses", "expense")}
-                <Lines groupBy={groupBy} lines={lines.filter((l) => l.item.kind === "expense")} meta={new Set(lines.filter((l) => l.item.kind === "expense").map((l) => l.item.type_id)).size > 1 ? bankOnly : meta} onToggle={togglePaid} onOpen={openLine} locked={!canEdit} empty={`No expenses in ${monthLabel(ym)}.`} />
+                <Lines onReorder={onReorder} groupBy={groupBy} lines={lines.filter((l) => l.item.kind === "expense")} meta={new Set(lines.filter((l) => l.item.kind === "expense").map((l) => l.item.type_id)).size > 1 ? bankOnly : meta} onToggle={togglePaid} onOpen={openLine} locked={!canEdit} empty={`No expenses in ${monthLabel(ym)}.`} />
               </>
             )}
 

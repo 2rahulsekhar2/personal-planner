@@ -17,6 +17,7 @@ const EMPTY = {
   steps: false, // true once an item can change its amount from a date (0020_money_amount_steps.sql)
   loans: false, // true once an item can be a loan (0021_money_loans.sql)
   formulas: false, // true once an item can be computed from others (0022_money_computed.sql)
+  ordering: false, // true once an item can be given a place in its list (0024_money_item_order.sql)
 };
 
 /** Everything the Money side needs: whether it is on, the mode last used, and every budget this person can read. */
@@ -53,9 +54,9 @@ export function useMoney(ctx: PlannerCtx) {
         if (page.data.length < 1000) return { data: rows, error: null };
       }
     };
-    // Newest shape first. Each of these columns came with a later migration (0020, 0021, 0022, in this order);
+    // Newest shape first. Each of these columns came with a later migration (0020, 0021, 0022, 0024, in this order);
     // where the newest is missing, ask again without it, and so on back.
-    const LATER = ["amount_steps", "loan", "formula"];
+    const LATER = ["amount_steps", "loan", "formula", "sort_order"];
     const loadItems = (later: number) => supabase.from("money_items").select(`id, kind, name, amount, freq, start_date, end_date, bank_id, type_id, increase_id, person_ids, notes${c}${LATER.slice(0, later).map((x) => `, ${x}`).join("")}`).order("name");
     // shortcut: loads every item and month entry at once, fine for one household; load entries by month range if this grows past a few thousand rows
     const [banks, types, increases, people, items, entries, months, proposals, approvals] = await Promise.all([
@@ -72,7 +73,7 @@ export function useMoney(ctx: PlannerCtx) {
     let later = LATER.length;
     let itemRows = items;
     while (itemRows.error && later > 0) itemRows = await loadItems(--later);
-    const steps = later >= 1, loans = later >= 2, formulas = later >= 3;
+    const steps = later >= 1, loans = later >= 2, formulas = later >= 3, ordering = later >= 4;
     const err = banks.error || types.error || increases.error || people.error || itemRows.error || entries.error || months.error || proposals.error || approvals.error;
     setError(err?.message ?? null);
     if (!err) {
@@ -81,7 +82,7 @@ export function useMoney(ctx: PlannerCtx) {
         people: people.data as unknown as Person[], items: itemRows.data as unknown as MoneyItem[], entries: entries.data as MoneyEntry[],
         months: (months.data as unknown as PlannedMark[]).map((m) => ({ month: m.month.slice(0, 7), circle_id: m.circle_id ?? null, user_id: m.user_id })),
         proposals: proposals.data as Proposal[], approvals: approvals.data as { proposal_id: string; user_id: string }[],
-        family: active.flatMap((s) => (s.circle_id ? [s.circle_id] : [])), shared, steps, loans, formulas,
+        family: active.flatMap((s) => (s.circle_id ? [s.circle_id] : [])), shared, steps, loans, formulas, ordering,
       });
     }
     setStatus("on");

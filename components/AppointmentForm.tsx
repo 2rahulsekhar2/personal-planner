@@ -4,9 +4,8 @@ import { DateTime } from "luxon";
 import type { PlannerCtx } from "./usePlanner";
 import { APPT_FIELDS } from "./usePlanner";
 import type { Appointment, AppointmentStatus } from "@/lib/types";
-import { ACTIVITY_COLORS, reminderLabel } from "@/lib/types";
-import ReminderPicker from "./ReminderPicker";
-import { useReveal } from "./useReveal";
+import { splitReminders, tidyReminders } from "@/lib/types";
+import ReminderChips from "./ReminderChips";
 import { ColorPicker } from "./ActivityTypesView";
 import { findConflicts, isOverlapError } from "@/lib/conflicts";
 import { isCurrent, seatsOf, type Circle } from "@/lib/circles";
@@ -15,7 +14,7 @@ import { choiceFromSeries, expandRule, storedRule, toRule, NO_REPEAT, type Repea
 import RepeatPicker from "./RepeatPicker";
 import { isGoogleMapsUrl } from "@/lib/maps";
 import DayBar from "./DayBar";
-import { Named } from "./FormBits";
+import { Named, Step } from "./FormBits";
 
 interface OccReview {
   date: string;
@@ -67,10 +66,11 @@ export default function AppointmentForm({
   const [title, setTitle] = useState(existing?.title ?? "");
   const [titleEdited, setTitleEdited] = useState(!!existing);
   const [status, setStatus] = useState<AppointmentStatus>(existing?.status === "tentative" ? "tentative" : "confirmed");
-  const [reminder, setReminder] = useState<number | null>(existing ? existing.reminder_minutes : profile?.default_reminder_minutes ?? 60);
+  // Minutes before the start, one for each reminder; empty for none.
+  const [reminders, setReminders] = useState<number[]>(() => tidyReminders(existing ? [existing.reminder_minutes, ...(existing.extra_reminder_minutes ?? [])] : [profile?.default_reminder_minutes ?? 60]));
+  const remind = splitReminders(reminders);
   const [team] = useState(existing?.team ?? ""); // no longer editable; an older appointment keeps what it has
   const [notes, setNotes] = useState(existing?.notes ?? "");
-  const [more, setMore] = useState(false);
   // Repeat: how often, on which days, and how it ends. On an existing series it is loaded when "this and following" is chosen.
   const [rep, setRep] = useState<RepeatChoice>(NO_REPEAT);
   const repeat = !!rep.freq;
@@ -86,8 +86,8 @@ export default function AppointmentForm({
   const requestId = useRef<string>(crypto.randomUUID());
 
   const [newPlace, setNewPlace] = useState<{ name: string; url: string } | null>(null);
-  const blankType = () => ({ name: "", color: ACTIVITY_COLORS[types.length % ACTIVITY_COLORS.length].key as string });
-  const [newType, setNewType] = useState<{ name: string; color: string } | null>(() => (types.some((t) => !t.archived_at) ? null : blankType())); // nothing to pick yet: start by naming one
+  const [savingType, setSavingType] = useState(false); // the typed activity is being saved: its colour is being chosen
+  const [typeBusy, setTypeBusy] = useState<string | null>(null); // the colour just chosen, while the save is on its way
 
   const type = typeById.get(typeId);
   const place = placeId ? placeById.get(placeId) : undefined;
@@ -97,6 +97,15 @@ export default function AppointmentForm({
   const finalTitle = (titleEdited ? title : generatedTitle).trim() || generatedTitle;
 
   const activeTypes = types.filter((t) => !t.archived_at || t.id === typeId);
+  // While a one-off is being typed, only the saved activities that match it are offered.
+  const typed = typeId ? "" : customActivity?.trim() ?? "";
+  const shownTypes = activeTypes.filter((t) => t.name.toLowerCase().includes(typed.toLowerCase()));
+  // Typing a saved activity's whole name picks it, so the same one is never saved twice.
+  function typeActivity(v: string) {
+    const same = activeTypes.find((t) => !t.archived_at && t.name.toLowerCase() === v.trim().toLowerCase());
+    setSavingType(false);
+    if (same) { setTypeId(same.id); setCustomActivity(null); } else { setTypeId(""); setCustomActivity(v); }
+  }
   const activePlaces = places.filter((p) => !p.archived_at || p.id === placeId);
 
   // Any change to timing or type invalidates a previous conflict check.
@@ -107,8 +116,6 @@ export default function AppointmentForm({
     setError(null);
   }, [typeId, date, start, end, status, repKey, scope]);
 
-  // Opening More options opens fields below the fold: bring them into view.
-  const moreRef = useReveal<HTMLDivElement>(more);
   const rule = toRule(rep, date, start, end, tz);
 
   // Editing "this and following": fetch how the series repeats, so it can be shown and changed.
@@ -124,7 +131,6 @@ export default function AppointmentForm({
       const c = choiceFromSeries(res.data as unknown as { rule?: unknown; weekdays: number[]; end_date: string });
       setRep(c);
       setLoadedRep(JSON.stringify(c));
-      setMore(true); // the Repeat section sits under More options
     })();
     return () => { live = false; };
   }, [seriesId, scope, loadedRep, supabase]);
@@ -204,8 +210,19 @@ export default function AppointmentForm({
       status,
       team: team.trim() || null,
       notes: notes.trim() || null,
-      reminder_minutes: reminder,
+      reminder_minutes: remind.first,
+      // Sent only when the database has the column. The series functions do not read it: see saveExtraReminders.
+      ...(ctx.manyReminders ? { extra_reminder_minutes: remind.rest } : {}),
     };
+  }
+
+  // shortcut: a series is saved by database functions that copy only the first reminder, so the others are written
+  // in a second step that can fail on its own. Move it into those functions if that ever shows.
+  async function saveExtraReminders(where: { series: string } | { ids: string[] }) {
+    if (!ctx.manyReminders) return;
+    const q = supabase.from("appointments").update({ extra_reminder_minutes: remind.rest });
+    const { error } = await ("series" in where ? q.eq("series_id", where.series) : q.in("id", where.ids));
+    if (error) toast("error", `Saved, but only the first reminder was set: ${error.message}`);
   }
 
   async function handleDbError(err: { code?: string; message?: string }) {
@@ -302,6 +319,7 @@ export default function AppointmentForm({
     }
     // Keep the rule with the series. Without 0013_repeat_rule.sql the column is missing and this is skipped; the appointments are saved either way.
     if (repeat) await supabase.from("appointment_series").update({ rule: storedRule(rep, date) }).eq("id", data as string);
+    if (remind.rest.length) await saveExtraReminders({ series: data as string }); // new rows start with none
     await saveGoing({ p_series: data as string });
     await refresh();
     const skipped = rev.length - keep.length;
@@ -345,6 +363,7 @@ export default function AppointmentForm({
     }
     const { error: e2 } = await supabase.rpc("update_appointments_bulk", { changes, fields: fields() });
     if (e2) return handleDbError(e2);
+    await saveExtraReminders({ ids });
     await saveGoing({ p_series: existing.series_id!, p_from: existing.starts_at });
     await refresh();
     toast("ok", `Updated ${changes.length} appointment${changes.length > 1 ? "s" : ""} in the series`);
@@ -394,18 +413,19 @@ export default function AppointmentForm({
     setError(null);
   }
 
-  // Create an activity type without leaving the form, then select it.
-  async function addType() {
-    if (!newType) return;
-    const name = newType.name.trim();
-    if (!name) return setError("Give the activity a name.");
-    if (types.some((t) => !t.archived_at && t.name.toLowerCase() === name.toLowerCase())) return setError("You already have an activity type with that name.");
-    const { data, error } = await supabase.from("activity_types").insert({ name, color: newType.color }).select("id").single();
-    if (error) return setError(`Couldn’t save the activity: ${error.message}`);
+  // Save the typed activity in the chosen colour without leaving the form, then select it.
+  async function addType(color: string) {
+    if (!typed || typeBusy) return;
+    setTypeBusy(color);
+    const { data, error } = await supabase.from("activity_types").insert({ name: typed, color }).select("id").single();
+    // Said in a toast: the form's own error line is far below, out of sight.
+    if (error) { setTypeBusy(null); return toast("error", `Couldn’t save the activity: ${error.message}`); }
     await refresh();
     setTypeId(data.id);
-    setNewType(null);
-    setError(null);
+    setCustomActivity(null);
+    setSavingType(false);
+    setTypeBusy(null);
+    toast("ok", `Saved “${typed}” to your activities`);
   }
 
   const inSeriesScope = !!existing?.series_id && scope === "series";
@@ -456,169 +476,148 @@ export default function AppointmentForm({
         </fieldset>
       )}
 
-      <fieldset className="field">
-        <legend><Named icon="tag">Activity</Named></legend>
-        {/* One line to type a one-off, with the saved activities as small picks under it. */}
-        <input
-          value={type?.name ?? customActivity ?? ""}
-          onChange={(e) => { setTypeId(""); setCustomActivity(e.target.value); }}
-          placeholder="Type an activity, or pick one"
-          maxLength={100}
-          aria-label="Activity"
-        />
-        <div className="chips chips-xs">
-          {activeTypes.map((t) => (
-            <button type="button" key={t.id} className={`chip act-${t.color} ${typeId === t.id ? "is-selected" : ""}`} aria-pressed={typeId === t.id} onClick={() => { setTypeId(t.id); setCustomActivity(null); }}>
-              <span className="swatch" aria-hidden /> {t.name}
-            </button>
-          ))}
-          {!newType && <button type="button" className="chip chip-dashed" onClick={() => setNewType(blankType())}>＋ Save a new one</button>}
-        </div>
-        {!typeId && customActivity?.trim() && <p className="hint">Only for this one. Not saved to your activities.</p>}
-        {newType && (
-          <div className="subform">
-            <label className="field"><span>Activity name</span><input value={newType.name} onChange={(e) => setNewType({ ...newType, name: e.target.value })} placeholder="Cricket" autoFocus /></label>
-            <ColorPicker value={newType.color} onChange={(color) => setNewType({ ...newType, color })} />
-            <div className="row">
-              <button type="button" className="btn" onClick={addType}>Save activity</button>
-              <button type="button" className="btn btn-ghost" onClick={() => setNewType(null)}>Cancel</button>
-            </div>
-          </div>
-        )}
-      </fieldset>
-
-      <fieldset className="field">
-        <legend><Named icon="clock">When</Named></legend>
-        <div className="chips">
-          <button type="button" disabled={inSeriesScope} className={`chip ${date === today ? "is-selected" : ""}`} aria-pressed={date === today} onClick={() => setDate(today)}>Today</button>
-          <button type="button" disabled={inSeriesScope} className={`chip ${date === tomorrow ? "is-selected" : ""}`} aria-pressed={date === tomorrow} onClick={() => setDate(tomorrow)}>Tomorrow</button>
-          <input type="date" disabled={inSeriesScope} aria-label="Date" value={date} onChange={(e) => setDate(e.target.value)} className="input-inline" />
-        </div>
-        {inSeriesScope && <p className="hint">Dates stay the same for each occurrence; only the times change.</p>}
-        <div className="time-row">
-          <input type="time" required aria-label="Start" value={start} onChange={(e) => onStartChange(e.target.value)} />
-          <span className="muted">to</span>
-          <input type="time" required aria-label="End" value={end} onChange={(e) => setEnd(e.target.value)} />
-        </div>
-        {/* The day as a bar: what is already booked, and this appointment outlined among it. */}
-        {interval.valid && <DayBar appts={sameDay} typeById={typeById} day={date} tz={tz} ghost={{ from: interval.start, to: interval.end }} />}
-      </fieldset>
-      {interval.valid && interval.nextDay && start !== end && <p className="hint">Ends the next day, {interval.end.toFormat("ccc d LLL, h:mm a")}.</p>}
-
-      <fieldset className="field">
-        <legend><Named icon="pin">Place</Named></legend>
-        <input
-          value={place?.name ?? customPlace ?? ""}
-          onChange={(e) => { setPlaceId(""); setCustomPlace(e.target.value); }}
-          placeholder="Type a place, or pick one (optional)"
-          maxLength={200}
-          aria-label="Place"
-        />
-        <div className="chips chips-xs">
-          {activePlaces.map((p) => (
-            <button type="button" key={p.id} className={`chip ${placeId === p.id ? "is-selected" : ""}`} aria-pressed={placeId === p.id} onClick={() => { setPlaceId(placeId === p.id ? "" : p.id); setCustomPlace(null); }}>{p.name}</button>
-          ))}
-          {!newPlace && <button type="button" className="chip chip-dashed" onClick={() => setNewPlace({ name: "", url: "" })}>＋ Save a new one</button>}
-        </div>
-        {!placeId && customPlace?.trim() && <p className="hint">Only for this one. Not saved to your places.</p>}
-        {newPlace && (
-          <div className="subform">
-            <label className="field"><span>Place name</span><input value={newPlace.name} onChange={(e) => setNewPlace({ ...newPlace, name: e.target.value })} placeholder="Riverside Ground" /></label>
-            <label className="field"><span>Google Maps link</span><input value={newPlace.url} onChange={(e) => setNewPlace({ ...newPlace, url: e.target.value })} placeholder="https://maps.app.goo.gl/…" inputMode="url" /></label>
-            <div className="row">
-              <button type="button" className="btn" onClick={addPlace}>Save place</button>
-              <button type="button" className="btn btn-ghost" onClick={() => setNewPlace(null)}>Cancel</button>
-            </div>
-          </div>
-        )}
-      </fieldset>
-
-      {ctx.sharing && circles.length > 0 && (
-        <fieldset className="field">
-          <legend><Named icon="people">Share with</Named></legend>
-          <div className="chips chips-xs" style={{ marginTop: 0 }}>
-            <button type="button" className={`chip ${!circleId ? "is-selected" : ""}`} aria-pressed={!circleId} onClick={() => share("")}>Just me</button>
-            {circles.map((c) => (
-              <button type="button" key={c.id} className={`chip ${circleId === c.id ? "is-selected" : ""}`} aria-pressed={circleId === c.id} onClick={() => share(c.id)}>{c.name}</button>
+      {/* The questions an appointment answers, as stops down a line. Each mark fills once its stop is answered. */}
+      <div className={`steps act-${type?.color ?? "slate"}`}>
+        <Step icon="tag" name="What" set={!!activityName}>
+          {/* One line: type to narrow the saved activities under it, or to name a one-off. */}
+          <input
+            value={type?.name ?? customActivity ?? ""}
+            onChange={(e) => typeActivity(e.target.value)}
+            placeholder="Activity"
+            className={type ? `activity-saved act-${type.color}` : undefined}
+            maxLength={100}
+            aria-label="Activity: type to find one, or to name a new one"
+          />
+          <div className="chips chips-xs">
+            {shownTypes.map((t) => (
+              <button type="button" key={t.id} className={`chip act-${t.color} ${typeId === t.id ? "is-selected" : ""}`} aria-pressed={typeId === t.id} onClick={() => { setTypeId(t.id); setCustomActivity(null); setSavingType(false); }}>
+                <span className="swatch" aria-hidden /> {t.name}
+              </button>
             ))}
-          </div>
-          {circleId && ctx.replies && (
-            <div className="row seat-role">
-              <span className="muted">They see</span>
-              <span className="chips chips-xs" role="group" aria-label="What the circle sees">
-                <button type="button" className={`chip ${!busyOnly ? "is-selected" : ""}`} aria-pressed={!busyOnly} onClick={() => setBusyOnly(false)}>Everything</button>
-                <button type="button" className={`chip ${busyOnly ? "is-selected" : ""}`} aria-pressed={busyOnly} onClick={() => setBusyOnly(true)}>Busy only</button>
+            {/* A new name is for this appointment only, unless it is saved: then a colour is all it needs. */}
+            {typed && !savingType && <button type="button" className="chip chip-dashed" onClick={() => setSavingType(true)}>＋ Save “{typed}”</button>}
+            {typed && savingType && (
+              <span className={`chip chip-dashed type-colors ${typeBusy ? "is-busy" : ""}`} role="group" aria-label={`Pick a colour to save “${typed}”`} aria-busy={!!typeBusy}>
+                <ColorPicker value={typeBusy ?? ""} onChange={addType} />
+                {typeBusy
+                  ? <span role="status">Saving…</span>
+                  : <button type="button" className="link-plain" aria-label="Don’t save" title="Don’t save" onClick={() => setSavingType(false)}>✕</button>}
               </span>
+            )}
+          </div>
+        </Step>
+
+        <Step icon="clock" name="When" set={interval.valid && start !== end}>
+          <div className="chips">
+            <button type="button" disabled={inSeriesScope} className={`chip ${date === today ? "is-selected" : ""}`} aria-pressed={date === today} onClick={() => setDate(today)}>Today</button>
+            <button type="button" disabled={inSeriesScope} className={`chip ${date === tomorrow ? "is-selected" : ""}`} aria-pressed={date === tomorrow} onClick={() => setDate(tomorrow)}>Tomorrow</button>
+            <input type="date" disabled={inSeriesScope} aria-label="Date" value={date} onChange={(e) => setDate(e.target.value)} className="input-inline" />
+          </div>
+          {inSeriesScope && <p className="hint">Each keeps its date; only the times change.</p>}
+          <div className="time-row">
+            <input type="time" required aria-label="Start" value={start} onChange={(e) => onStartChange(e.target.value)} />
+            <span className="muted" aria-hidden>–</span>
+            <input type="time" required aria-label="End" value={end} onChange={(e) => setEnd(e.target.value)} />
+          </div>
+          {/* The day as a bar: what is already booked, and this appointment outlined among it. */}
+          {interval.valid && <DayBar appts={sameDay} typeById={typeById} day={date} tz={tz} ghost={{ from: interval.start, to: interval.end }} />}
+          {interval.valid && interval.nextDay && start !== end && <p className="hint">Ends the next day, {interval.end.toFormat("ccc d LLL, h:mm a")}.</p>}
+        </Step>
+
+        <Step icon="pin" name="Where" set={!!placeName}>
+          <input
+            value={place?.name ?? customPlace ?? ""}
+            onChange={(e) => { setPlaceId(""); setCustomPlace(e.target.value); }}
+            placeholder="Place"
+            maxLength={200}
+            aria-label="Place, optional: type one, or pick one"
+          />
+          <div className="chips chips-xs">
+            {activePlaces.map((p) => (
+              <button type="button" key={p.id} className={`chip ${placeId === p.id ? "is-selected" : ""}`} aria-pressed={placeId === p.id} onClick={() => { setPlaceId(placeId === p.id ? "" : p.id); setCustomPlace(null); }}>{p.name}</button>
+            ))}
+            {!newPlace && (
+              <button type="button" className="chip chip-dashed" aria-label="Save a new place" title="Save a new place" onClick={() => setNewPlace({ name: placeId ? "" : customPlace?.trim() ?? "", url: "" })}>
+                ＋{!placeId && customPlace?.trim() ? ` Save “${customPlace.trim()}”` : ""}
+              </button>
+            )}
+          </div>
+          {newPlace && (
+            <div className="subform">
+              <input value={newPlace.name} onChange={(e) => setNewPlace({ ...newPlace, name: e.target.value })} placeholder="New place" aria-label="Place name" />
+              <input value={newPlace.url} onChange={(e) => setNewPlace({ ...newPlace, url: e.target.value })} placeholder="https://maps.app.goo.gl/…" aria-label="Google Maps link" inputMode="url" />
+              <div className="row">
+                <button type="button" className="btn" onClick={addPlace}>Save place</button>
+                <button type="button" className="btn btn-ghost" onClick={() => setNewPlace(null)}>Cancel</button>
+              </div>
             </div>
           )}
-          {circleId && <span className="hint">{busyOnly && ctx.replies
-            ? `${circles.find((c) => c.id === circleId)?.name} sees only that you are busy then.`
-            : `Everyone in ${circles.find((c) => c.id === circleId)?.name} sees it. Only you can change it.`}</span>}
-        </fieldset>
-      )}
+        </Step>
 
-      {ctx.people && circleId && others.length > 0 && !(busyOnly && ctx.replies) && (
-        <fieldset className="field">
-          <legend><Named icon="people">Who is going</Named></legend>
-          <div className="chips chips-xs" style={{ marginTop: 0 }}>
-            <span className="chip is-selected going-you">You</span>
-            {others.map((m) => {
-              const on = going.includes(m.user_id);
-              return (
-                <button type="button" key={m.user_id} className={`chip ${on ? "is-selected" : ""}`} aria-pressed={on} title={m.email} onClick={() => setGoing(on ? going.filter((x) => x !== m.user_id) : [...going, m.user_id])}>
-                  <span className={`who act-${m.color}`} aria-hidden>{m.letter}</span> {m.email.split("@")[0]}
-                </button>
-              );
-            })}
-          </div>
-          {busy.map((b) => (
-            <span key={b.user_id + b.starts_at} className="hint busy-note">{others.find((m) => m.user_id === b.user_id)?.email.split("@")[0] ?? "Someone"} is busy {fmtRange(b.starts_at, b.ends_at, tz)}.</span>
-          ))}
-          {going.length > 0 && <span className="hint">It goes in their calendar too, with their own reminder.</span>}
-        </fieldset>
-      )}
-
-      <label className="field"><span><Named icon="note">Notes</Named></span><textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="What to bring, who to call" /></label>
-
-      {/* Folded, the three settings inside show as chips, so nothing has to be opened just to check it. */}
-      <button type="button" className="disclosure more-toggle" aria-expanded={more} onClick={() => setMore(!more)}>
-        <span>{more ? "▾" : "▸"} More</span>
-        {!more && (
-          <span className="chips chips-xs">
-            <span className={`chip ${status === "tentative" ? "chip-dashed" : ""}`}>{status === "tentative" ? "Tentative" : "Confirmed"}</span>
-            <span className="chip"><Named icon="bell">{reminderLabel(reminder)}</Named></span>
-            {repeat && <span className="chip"><Named icon="repeat">Repeats</Named></span>}
-          </span>
-        )}
-      </button>
-
-      {more && (
-        <div className="stack reveal" ref={moreRef}>
-          {/* Each choice carries a sample of how the appointment will be drawn on the calendar: solid, or dashed. */}
-          <fieldset className="field">
-            <legend><Named icon="check">Status</Named></legend>
-            <div className="status-pick">
-              {([["confirmed", "Confirmed"], ["tentative", "Tentative"]] as const).map(([s, label]) => (
-                <button type="button" key={s} className={`status-opt is-${s} ${status === s ? "is-selected" : ""}`} aria-pressed={status === s} onClick={() => setStatus(s)}>
-                  <span className="status-sample" aria-hidden />
-                  <span className="add-label">{label}</span>
-                </button>
+        {ctx.sharing && circles.length > 0 && (
+          <Step icon="people" name="Who" set={!!circleId}>
+            <div className="chips chips-xs" role="group" aria-label="Share with">
+              <button type="button" className={`chip ${!circleId ? "is-selected" : ""}`} aria-pressed={!circleId} onClick={() => share("")}>Just me</button>
+              {circles.map((c) => (
+                <button type="button" key={c.id} className={`chip ${circleId === c.id ? "is-selected" : ""}`} aria-pressed={circleId === c.id} onClick={() => share(c.id)}>{c.name}</button>
               ))}
             </div>
-          </fieldset>
-          <fieldset className="field">
-            <legend><Named icon="bell">Reminder</Named></legend>
-            <ReminderPicker value={reminder} onChange={setReminder} />
-          </fieldset>
+            {circleId && ctx.replies && (
+              <div className="chips chips-xs" role="group" aria-label="What the circle sees">
+                <span className="muted" title="What the circle sees"><Named icon="eye">{null}</Named></span>
+                <button type="button" className={`chip ${!busyOnly ? "is-selected" : ""}`} aria-pressed={!busyOnly} onClick={() => setBusyOnly(false)}>Everything</button>
+                <button type="button" className={`chip ${busyOnly ? "is-selected" : ""}`} aria-pressed={busyOnly} onClick={() => setBusyOnly(true)}>Busy only</button>
+              </div>
+            )}
+            {ctx.people && circleId && others.length > 0 && !(busyOnly && ctx.replies) && (
+              <>
+                <div className="chips chips-xs" role="group" aria-label="Who is going">
+                  <span className="chip is-selected going-you">You</span>
+                  {others.map((m) => {
+                    const on = going.includes(m.user_id);
+                    return (
+                      <button type="button" key={m.user_id} className={`chip ${on ? "is-selected" : ""}`} aria-pressed={on} title={m.email} onClick={() => setGoing(on ? going.filter((x) => x !== m.user_id) : [...going, m.user_id])}>
+                        <span className={`who act-${m.color}`} aria-hidden>{m.letter}</span> {m.email.split("@")[0]}
+                      </button>
+                    );
+                  })}
+                </div>
+                {busy.map((b) => (
+                  <span key={b.user_id + b.starts_at} className="hint busy-note">{others.find((m) => m.user_id === b.user_id)?.email.split("@")[0] ?? "Someone"} is busy {fmtRange(b.starts_at, b.ends_at, tz)}.</span>
+                ))}
+              </>
+            )}
+          </Step>
+        )}
 
-          {(!existing || (scope === "series" && loadedRep !== null)) && (
-            <RepeatPicker
-              value={rep} onChange={setRep} date={date} startTime={start} endTime={end} tz={tz} noun="appointment"
-              note={rebuild && <span className="hint">Saving replaces this appointment and the ones after it with this new run. Earlier ones stay as they are.</span>}
-            />
-          )}
-        </div>
-      )}
+        <Step icon="more" name="More" set={status === "tentative" || reminders.length > 0 || repeat || !!notes.trim()}>
+          <div className="stack">
+            {/* Each choice carries a sample of how the appointment will be drawn on the calendar: solid, or dashed. */}
+            <fieldset className="field">
+              <legend><Named icon="check">Status</Named></legend>
+              <div className="status-pick">
+                {([["confirmed", "Confirmed"], ["tentative", "Tentative"]] as const).map(([s, label]) => (
+                  <button type="button" key={s} className={`status-opt is-${s} ${status === s ? "is-selected" : ""}`} aria-pressed={status === s} onClick={() => setStatus(s)}>
+                    <span className="status-sample" aria-hidden />
+                    <span className="add-label">{label}</span>
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+            <fieldset className="field">
+              <legend><Named icon="bell">Reminder</Named></legend>
+              <ReminderChips value={reminders} onChange={setReminders} many={ctx.manyReminders} />
+            </fieldset>
+            {(!existing || (scope === "series" && loadedRep !== null)) && (
+              <RepeatPicker
+                value={rep} onChange={setRep} date={date} startTime={start} endTime={end} tz={tz} noun="appointment"
+                note={rebuild && <span className="hint">Saving replaces this appointment and the ones after it with this new run. Earlier ones stay as they are.</span>}
+              />
+            )}
+            <label className="field"><span><Named icon="note">Notes</Named></span><textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></label>
+          </div>
+        </Step>
+      </div>
 
       {blocking.length > 0 && (
         <div className="alert alert-error" role="alert">

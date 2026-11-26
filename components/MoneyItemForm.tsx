@@ -2,9 +2,9 @@
 import { useEffect, useState } from "react";
 import type { PlannerCtx } from "./usePlanner";
 import type { MoneyCtx } from "./useMoney";
-import { Named } from "./FormBits";
+import { Named, Step } from "./FormBits";
 import { TONES } from "./MoneySetup";
-import { amountPeriods, evalFormula, formulaLoops, FREQ_LABELS, inr, loanEmi, loanNow, loanSchedule, monthLines, withParts, type FormulaToken, type Loan, monthLabel, parseAmount, type Line, type MoneyFreq, type MoneyItem, type MoneyKind, type Proposal } from "@/lib/money";
+import { amountPeriods, oneAName, evalFormula, formulaLoops, FREQ_LABELS, inr, loanEmi, loanNow, loanSchedule, monthLines, withParts, type FormulaToken, type Loan, monthLabel, parseAmount, type Line, type MoneyFreq, type MoneyItem, type MoneyKind, type Proposal } from "@/lib/money";
 import { isCurrent, type Circle } from "@/lib/circles";
 import { todayISO } from "@/lib/time";
 import { DateTime } from "luxon";
@@ -42,6 +42,7 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
   const [computedOn, setComputedOn] = useState(!!from?.formula);
   const [tokens, setTokens] = useState<FormulaToken[]>(from?.formula ?? []);
   const [figure, setFigure] = useState(""); // a number being typed for the formula
+  const [find, setFind] = useState(""); // narrows the items offered for the formula
   const [taken, setTaken] = useState(from?.loan ? String(from.loan.principal) : "");
   const [rate, setRate] = useState(from?.loan ? String(from.loan.rate) : "");
   const [loanKind, setLoanKind] = useState<Loan["kind"]>(from?.loan?.kind ?? "reducing");
@@ -133,6 +134,10 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
   const nameOf = new Map(money.items.map((i) => [i.id, i.name]));
   // An item whose own formula leads back here would make a loop, so it is not offered.
   const usable = isComputed ? money.items.filter((i) => i.id !== selfId && !formulaLoops(selfId, [{ t: "item", id: i.id }], money.items)) : [];
+  // Offered one a name, narrowed by what is typed, and never more than a screenful at once.
+  const named = oneAName(usable, todayIso.slice(0, 7)).sort((a, b) => a.name.localeCompare(b.name));
+  const offered = named.filter((i) => i.name.toLowerCase().includes(find.trim().toLowerCase()));
+  const MOST = 24;
   const formulaOk = !evalFormula(tokens, () => 1).error;
   const trial = isComputed && tokens.length
     ? withParts(monthLines([...money.items.filter((i) => i.id !== selfId), { id: selfId, kind, name, amount: 0, freq: "monthly", start_date: `${todayIso.slice(0, 7)}-01`, end_date: null, bank_id: null, type_id: null, increase_id: null, person_ids: [], notes: null, formula: tokens }], money.entries, money.increases, todayIso.slice(0, 7))).find((l) => l.item.id === selfId)
@@ -237,174 +242,199 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
           {money.formulas && <button type="button" className={`chip chip-sm ${isComputed ? "is-selected" : ""}`} aria-pressed={isComputed} onClick={() => { setComputedOn(true); setLoanOn(false); }}><span className="sort-mark is-sum" aria-hidden>ƒ</span>Computed</button>}
         </div>
       )}
-      <label className="field"><span><Named icon="tag">Name</Named></span><input className="input-lead" value={name} onChange={(e) => setName(e.target.value)} placeholder={isLoan ? "Home loan" : expense ? "Wifi bill" : "Salary"} autoFocus={!existing} /></label>
-      {isLoan && (
-        <>
-          <div className="field-row">
-            <label className="field"><span>Amount taken</span><input value={taken} onChange={(e) => setTaken(e.target.value)} inputMode="decimal" placeholder="₹" aria-invalid={!!taken && loanText.principal === null} /></label>
-            <label className="field"><span>Interest a year</span><input value={rate} onChange={(e) => setRate(e.target.value)} inputMode="decimal" placeholder="%" /></label>
+      {/* The same stops as an appointment, with one of its own: how much. What sort of item it is stays above them,
+          since it chooses the form. A stop's mark fills, in the type's colour, once it is answered. */}
+      <div className={`steps act-${typeTone.get(type) ?? "slate"}`}>
+        <Step icon="tag" name="What" set={!!name.trim() && !!type}>
+          <input className="input-lead" value={name} onChange={(e) => setName(e.target.value)} placeholder={isLoan ? "Home loan" : expense ? "Wifi bill" : "Salary"} aria-label="Name" autoFocus={!existing} />
+          <div role="group" aria-label={expense ? "Expense type" : "Income type"}>
+            <div className="chips chips-xs" id="money-type" style={{ marginTop: 0 }}>
+              {money.types.filter((t) => t.kind === kind && (!t.archived_at || t.id === type)).map((t) => {
+                const tone = typeTone.get(t.id);
+                return <button type="button" key={t.id} className={`chip act-${tone} ${type === t.id ? "is-selected" : ""}`} aria-pressed={type === t.id} onClick={() => setType(t.id)}><span className={`kit-mono is-mini act-${tone}`} aria-hidden>{t.name.trim()[0]?.toUpperCase()}</span>{t.name}</button>;
+              })}
+              {canEdit && <button type="button" className="chip chip-dashed" aria-label="New type" title="New type" aria-expanded={adding?.what === "type"} onClick={() => setAdding({ what: "type", name: "", balance: "" })}>＋</button>}
+            </div>
+            {adder("type")}
           </div>
-          <div className="field-row">
-            <label className="field"><span>Tenure <span className="muted">(months)</span></span><input value={tenure} onChange={(e) => setTenure(e.target.value)} inputMode="numeric" placeholder="60" /></label>
-            <fieldset className="field">
-              <legend>Interest on</legend>
-              <div className="chips chips-xs" id="money-loan-kind" style={{ marginTop: 0 }}>
-                {([["reducing", "Reducing balance", "M2 3c4 0 6 9 12 10"], ["flat", "Flat", "M2 3l12 10"]] as const).map(([v, label, d]) => (
-                  <button type="button" key={v} className={`chip ${loanKind === v ? "is-selected" : ""}`} aria-pressed={loanKind === v} onClick={() => setLoanKind(v)}>
-                    <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden><path d={d} /></svg>{label}
-                  </button>
+        </Step>
+
+        <Step icon="clock" name="When" set={!!start}>
+          {!isLoan && (
+            <div role="group" aria-label="Repeats">
+              <div className="chips chips-xs" id="money-freq" style={{ marginTop: 0 }}>
+                {(Object.keys(FREQ_LABELS) as MoneyFreq[]).map((v) => (
+                  <button type="button" key={v} className={`chip ${freq === v ? "is-selected" : ""}`} aria-pressed={freq === v} onClick={() => setFreq(v)}><span className="freq-mark" aria-hidden>{FREQ_MARK[v]}</span>{FREQ_LABELS[v]}</button>
                 ))}
               </div>
-            </fieldset>
+            </div>
+          )}
+          <div className="field-row">
+            <label className="field"><span><Named icon="clock">{isLoan ? "First EMI date" : freq === "once" ? "Date" : "First date"}</Named></span><input type="date" value={start} onChange={(e) => setStart(e.target.value)} /></label>
+            {freq !== "once" && !isLoan && <label className="field"><span>Last date <span className="muted">(optional)</span></span><input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label>}
           </div>
-        </>
-      )}
-      {!isLoan && (
-        <fieldset className="field">
-          <legend><Named icon="repeat">Repeats</Named></legend>
-          <div className="chips chips-xs" id="money-freq" style={{ marginTop: 0 }}>
-            {(Object.keys(FREQ_LABELS) as MoneyFreq[]).map((v) => (
-              <button type="button" key={v} className={`chip ${freq === v ? "is-selected" : ""}`} aria-pressed={freq === v} onClick={() => setFreq(v)}><span className="freq-mark" aria-hidden>{FREQ_MARK[v]}</span>{FREQ_LABELS[v]}</button>
-            ))}
+        </Step>
+
+        <Step icon="coin" name="How much" set={isComputed ? tokens.length > 0 && formulaOk : value !== null}>
+          <div className="stack">
+            {isLoan && (
+              <>
+                <div className="field-row">
+                  <label className="field"><span>Amount taken</span><input value={taken} onChange={(e) => setTaken(e.target.value)} inputMode="decimal" placeholder="₹" aria-invalid={!!taken && loanText.principal === null} /></label>
+                  <label className="field"><span>Interest a year</span><input value={rate} onChange={(e) => setRate(e.target.value)} inputMode="decimal" placeholder="%" /></label>
+                </div>
+                <div className="field-row">
+                  <label className="field"><span>Tenure <span className="muted">(months)</span></span><input value={tenure} onChange={(e) => setTenure(e.target.value)} inputMode="numeric" placeholder="60" /></label>
+                  <fieldset className="field">
+                    <legend>Interest on</legend>
+                    <div className="chips chips-xs" id="money-loan-kind" style={{ marginTop: 0 }}>
+                      {([["reducing", "Reducing balance", "M2 3c4 0 6 9 12 10"], ["flat", "Flat", "M2 3l12 10"]] as const).map(([v, label, d]) => (
+                        <button type="button" key={v} className={`chip ${loanKind === v ? "is-selected" : ""}`} aria-pressed={loanKind === v} onClick={() => setLoanKind(v)}>
+                          <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden><path d={d} /></svg>{label}
+                        </button>
+                      ))}
+                    </div>
+                  </fieldset>
+                </div>
+              </>
+            )}
+            {isComputed && (
+              <fieldset className="field">
+                <legend><Named icon="sum">Formula</Named></legend>
+                {/* The sum as built so far, read left to right. */}
+                <div className={`formula ${tokens.length && !formulaOk ? "is-open" : ""}`} role="group" aria-label="The formula so far">
+                  {tokens.length === 0 ? <span className="muted">Press an item or type a number, then a sign.</span> : tokens.map((t, n) => <span key={n} className={t.t === "item" ? "formula-item" : t.t === "op" ? "formula-sign" : "formula-num"}>{said(t)}</span>)}
+                </div>
+                <div className="formula-keys">
+                  {(["+", "-", "*", "/", "(", ")"] as const).map((v) => <button type="button" key={v} className="btn btn-sm" aria-label={{ "+": "Plus", "-": "Minus", "*": "Times", "/": "Divided by", "(": "Open bracket", ")": "Close bracket" }[v]} onClick={() => put({ t: "op", v })}>{SIGNS[v]}</button>)}
+                  <button type="button" className="btn btn-sm btn-ghost" aria-label="Remove the last piece" disabled={!tokens.length} onClick={() => setTokens(tokens.slice(0, -1))}>⌫</button>
+                  <button type="button" className="btn btn-sm btn-ghost" disabled={!tokens.length} onClick={() => setTokens([])}>Clear</button>
+                </div>
+                <div className="formula-figure" onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); putFigure(false); } }}>
+                  <input value={figure} onChange={(e) => setFigure(e.target.value)} inputMode="decimal" placeholder="A number" aria-label="A number for the formula" />
+                  <button type="button" className="btn btn-sm" aria-label="Add number" title="Add number" onClick={() => putFigure(false)}>＋</button>
+                  <button type="button" className="btn btn-sm" aria-label="Add as %" title="Add as a percentage" onClick={() => putFigure(true)}>＋ %</button>
+                </div>
+                {usable.length > 0 ? (
+                  <>
+                    {named.length > 8 && <input value={find} onChange={(e) => setFind(e.target.value)} placeholder="Find an item" aria-label="Find an item to use" />}
+                    <div className="chips chips-xs" role="group" aria-label="Items to use">
+                      {offered.slice(0, MOST).map((i) => <button type="button" key={i.id} className="chip" onClick={() => put({ t: "item", id: i.id })}>{i.name}</button>)}
+                      {offered.length > MOST && <span className="muted">and {offered.length - MOST} more: type to find one</span>}
+                      {offered.length === 0 && <span className="muted">No item by that name.</span>}
+                    </div>
+                  </>
+                ) : <span className="hint">There are no other items to use yet. Numbers still work.</span>}
+                {trial && formulaOk && <p className="formula-now" aria-live="polite">Comes to <strong>{inr(trial.budget)}</strong> in {monthLabel(todayIso.slice(0, 7))}</p>}
+                {tokens.length > 0 && (!formulaOk || trial?.warn) && <div className="alert alert-warn">{!formulaOk ? "Not complete yet." : `${trial!.warn} It shows as ₹0.`}</div>}
+                <span className="hint">Items used here move under this one.</span>
+              </fieldset>
+            )}
+            {/* The amount, and how it changes over time: a row for each stretch, the first from the first date. */}
+            {!isComputed && <fieldset className="field">
+              <legend><Named icon="coin">{isLoan ? "EMI" : "Budget amount"}</Named>{freq !== "once" && <span className="muted"> ({isLoan ? "each month" : "each time"})</span>}</legend>
+              {/* The amounts over time as steps, the one in force today lit. */}
+              {freq !== "once" && periods.length > 1 && (
+                <div className="amt-chart" aria-hidden>
+                  {periods.map((x, n) => <span key={n} className={x.from === nowFrom ? "is-now" : ""} style={{ height: `${Math.max(12, (x.amount / Math.max(...periods.map((y) => y.amount), 1)) * 100)}%` }} />)}
+                </div>
+              )}
+              <div className="amt-steps">
+                <div className={`amt-step is-lead ${periods.length > 1 && nowAt === 0 ? "is-now" : ""}`}>
+                  <input value={amountText} onChange={(e) => { setAmount(e.target.value); setEmiOwn(true); }} inputMode="decimal" placeholder="₹" aria-label={freq === "once" || !steps.length ? (isLoan ? "EMI" : "Budget amount") : "Amount from the first date"} aria-invalid={!!amount && value === null} />
+                  {freq !== "once" && steps.length > 0 && <span className="amt-when">from {fmtDay(start)}{periods[0]?.to ? `, to ${fmtDay(periods[0].to)}` : ""}</span>}
+                </div>
+                {freq !== "once" && steps.map((x, n) => (
+                  <div key={n} className={`amt-step ${nowAt === n + 1 ? "is-now" : ""}`}>
+                    <input value={x.amount} onChange={(e) => setSteps(steps.map((y, m) => (m === n ? { ...y, amount: e.target.value } : y)))} inputMode="decimal" placeholder="₹" aria-label={`Amount from change ${n + 1}`} aria-invalid={!!x.amount && parseAmount(x.amount) === null} />
+                    <span className="amt-when">
+                      from <input type="date" className="input-inline" value={x.from} min={start} max={end || undefined} aria-label={`Change ${n + 1} starts on`} onChange={(e) => setSteps(steps.map((y, m) => (m === n ? { ...y, from: e.target.value } : y)))} />
+                      {x.from && untilOf(x.from)}
+                    </span>
+                    <button type="button" className="icon-btn" aria-label={`Remove change ${n + 1}`} title="Remove" onClick={() => setSteps(steps.filter((_, m) => m !== n))}>✕</button>
+                  </div>
+                ))}
+              </div>
+              {freq !== "once" && money.steps && (
+                <button type="button" className="chip chip-dashed amt-add" onClick={() => setSteps([...steps, { from: "", amount: "" }])}>＋ Change the amount from a date</button>
+              )}
+              {isLoan && emiOwn && usual !== null && value !== usual && <button type="button" className="chip chip-dashed amt-add" onClick={() => setEmiOwn(false)}>Use the usual EMI, {inr(usual)}</button>}
+              {isLoan && !emiOwn && <span className="hint">Worked out from the loan.</span>}
+            </fieldset>}
+            {freq !== "once" && !isComputed && (
+              <fieldset className="field">
+                <legend><Named icon="trend">Yearly increase</Named></legend>
+                <div className="chips chips-xs" id="money-increase" style={{ marginTop: 0 }}>
+                  <button type="button" className={`chip ${!increase ? "is-selected" : ""}`} aria-pressed={!increase} onClick={() => setIncrease("")}>None</button>
+                  {money.increases.filter((i) => !i.archived_at || i.id === increase).map((i) => (
+                    <button type="button" key={i.id} className={`chip ${increase === i.id ? "is-selected" : ""}`} aria-pressed={increase === i.id} title={i.name} onClick={() => setIncrease(i.id)}><strong>{Number(i.percent)}%</strong>{i.name}</button>
+                  ))}
+                </div>
+              </fieldset>
+            )}
+            {isLoan && (
+              <>
+                {curve && (
+                  <div className="loan-chart" role="img" aria-label={`What is owed falls to nothing by ${stands?.ends ? DateTime.fromISO(stands.ends).toFormat("LLLL yyyy") : "the end"}`}>
+                    <svg viewBox="0 0 100 32" preserveAspectRatio="none">
+                      <polygon points={curve.area} />
+                      <polyline points={curve.line} vectorEffect="non-scaling-stroke" />
+                      <line x1={curve.at} x2={curve.at} y1="0" y2="32" vectorEffect="non-scaling-stroke" />
+                    </svg>
+                  </div>
+                )}
+                {stands && (
+                  <dl className="loan-facts" aria-live="polite">
+                    <div><dt>Owed today</dt><dd>{inr(stands.balance)}</dd></div>
+                    <div><dt>Interest in all</dt><dd>{stands.endless ? "—" : inr(stands.interest)}</dd></div>
+                    <div><dt>Ends</dt><dd>{stands.endless || !stands.ends ? "never" : DateTime.fromISO(stands.ends).toFormat("LLL yyyy")}</dd></div>
+                  </dl>
+                )}
+                {stands?.endless && <div className="alert alert-warn">This EMI does not cover the month’s interest, so the loan never ends. Raise the EMI.</div>}
+                <fieldset className="field">
+                  <legend>Lender’s balance <span className="muted">(optional)</span></legend>
+                  <div className="field-row">
+                    <input value={owed} onChange={(e) => setOwed(e.target.value)} inputMode="decimal" placeholder="₹ still owed" aria-label="Balance the lender shows" />
+                    <input type="date" value={owedOn} max={todayIso} onChange={(e) => setOwedOn(e.target.value)} aria-label="Date of that balance" />
+                  </div>
+                </fieldset>
+              </>
+            )}
           </div>
-        </fieldset>
-      )}
-      <div className="field-row">
-        <label className="field"><span><Named icon="clock">{isLoan ? "First EMI date" : freq === "once" ? "Date" : "First date"}</Named></span><input type="date" value={start} onChange={(e) => setStart(e.target.value)} /></label>
-        {freq !== "once" && !isLoan && <label className="field"><span>Last date <span className="muted">(optional)</span></span><input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label>}
+        </Step>
+
+        {/* The bank: where an expense is paid from, where income comes to. */}
+        <Step icon="bank" name={expense ? "From where" : "To where"} set={!!bank}>
+          <div role="group" aria-label={expense ? "Bank it is paid from" : "Bank it comes into"}>
+            <div className="chips chips-xs" id="money-bank" style={{ marginTop: 0 }}>
+              {money.banks.filter((b) => !b.archived_at || b.id === bank).map((b) => {
+                const tone = bankTone.get(b.id);
+                return <button type="button" key={b.id} className={`chip act-${tone} ${bank === b.id ? "is-selected" : ""}`} aria-pressed={bank === b.id} onClick={() => setBank(b.id)}><span className={`kit-mono is-mini act-${tone}`} aria-hidden>{b.name.trim()[0]?.toUpperCase()}</span>{b.name}</button>;
+              })}
+              {canEdit && <button type="button" className="chip chip-dashed" aria-label="New bank" title="New bank" aria-expanded={adding?.what === "bank"} onClick={() => setAdding({ what: "bank", name: "", balance: "" })}>＋</button>}
+            </div>
+            {adder("bank")}
+          </div>
+        </Step>
+
+        {family.length > 0 && (
+          <Step icon="people" name={expense ? "For whom" : "By whom"} set={people.length > 0}>
+          <div role="group" aria-label={expense ? "Incurred for" : "Received by"}>
+            <div className="chips chips-xs" style={{ marginTop: 0 }}>
+              {family.map((p) => {
+                const on = people.includes(p.id);
+                return <button type="button" key={p.id} className={`chip act-${personTone.get(p.id)} ${on ? "is-selected" : ""}`} aria-pressed={on} onClick={() => setPeople(on ? people.filter((x) => x !== p.id) : [...people, p.id])}><span className={`kit-mono is-mini is-round act-${personTone.get(p.id)}`} aria-hidden>{p.name.trim()[0]?.toUpperCase()}</span>{p.name}</button>;
+              })}
+            </div>
+            {people.length > 1 && value !== null && <span className="hint">Split equally: {inr(Math.round((value / people.length) * 100) / 100)} each.</span>}
+          </div>
+          </Step>
+        )}
+
+        <Step icon="more" name="More" set={!!notes.trim()}>
+          <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Notes" aria-label="Notes" />
+        </Step>
       </div>
-      {isComputed && (
-        <fieldset className="field">
-          <legend><Named icon="sum">Formula</Named></legend>
-          {/* The sum as built so far, read left to right. */}
-          <div className={`formula ${tokens.length && !formulaOk ? "is-open" : ""}`} role="group" aria-label="The formula so far">
-            {tokens.length === 0 ? <span className="muted">Press an item or type a number, then a sign.</span> : tokens.map((t, n) => <span key={n} className={t.t === "item" ? "formula-item" : t.t === "op" ? "formula-sign" : "formula-num"}>{said(t)}</span>)}
-          </div>
-          <div className="formula-keys">
-            {(["+", "-", "*", "/", "(", ")"] as const).map((v) => <button type="button" key={v} className="btn btn-sm" aria-label={{ "+": "Plus", "-": "Minus", "*": "Times", "/": "Divided by", "(": "Open bracket", ")": "Close bracket" }[v]} onClick={() => put({ t: "op", v })}>{SIGNS[v]}</button>)}
-            <button type="button" className="btn btn-sm btn-ghost" aria-label="Remove the last piece" disabled={!tokens.length} onClick={() => setTokens(tokens.slice(0, -1))}>⌫</button>
-            <button type="button" className="btn btn-sm btn-ghost" disabled={!tokens.length} onClick={() => setTokens([])}>Clear</button>
-          </div>
-          <div className="formula-figure" onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); putFigure(false); } }}>
-            <input value={figure} onChange={(e) => setFigure(e.target.value)} inputMode="decimal" placeholder="A number" aria-label="A number for the formula" />
-            <button type="button" className="btn btn-sm" aria-label="Add number" title="Add number" onClick={() => putFigure(false)}>＋</button>
-            <button type="button" className="btn btn-sm" aria-label="Add as %" title="Add as a percentage" onClick={() => putFigure(true)}>＋ %</button>
-          </div>
-          {usable.length > 0 ? (
-            <div className="chips chips-xs" role="group" aria-label="Items to use">
-              {usable.map((i) => <button type="button" key={i.id} className="chip" onClick={() => put({ t: "item", id: i.id })}>{i.name}</button>)}
-            </div>
-          ) : <span className="hint">There are no other items to use yet. Numbers still work.</span>}
-          {trial && formulaOk && <p className="formula-now" aria-live="polite">Comes to <strong>{inr(trial.budget)}</strong> in {monthLabel(todayIso.slice(0, 7))}</p>}
-          {tokens.length > 0 && (!formulaOk || trial?.warn) && <div className="alert alert-warn">{!formulaOk ? "Not complete yet." : `${trial!.warn} It shows as ₹0.`}</div>}
-          <span className="hint">Items used here move under this one.</span>
-        </fieldset>
-      )}
-      {/* The amount, and how it changes over time: a row for each stretch, the first from the first date. */}
-      {!isComputed && <fieldset className="field">
-        <legend><Named icon="coin">{isLoan ? "EMI" : "Budget amount"}</Named>{freq !== "once" && <span className="muted"> ({isLoan ? "each month" : "each time"})</span>}</legend>
-        {/* The amounts over time as steps, the one in force today lit. */}
-        {freq !== "once" && periods.length > 1 && (
-          <div className="amt-chart" aria-hidden>
-            {periods.map((x, n) => <span key={n} className={x.from === nowFrom ? "is-now" : ""} style={{ height: `${Math.max(12, (x.amount / Math.max(...periods.map((y) => y.amount), 1)) * 100)}%` }} />)}
-          </div>
-        )}
-        <div className="amt-steps">
-          <div className={`amt-step is-lead ${periods.length > 1 && nowAt === 0 ? "is-now" : ""}`}>
-            <input value={amountText} onChange={(e) => { setAmount(e.target.value); setEmiOwn(true); }} inputMode="decimal" placeholder="₹" aria-label={freq === "once" || !steps.length ? (isLoan ? "EMI" : "Budget amount") : "Amount from the first date"} aria-invalid={!!amount && value === null} />
-            {freq !== "once" && steps.length > 0 && <span className="amt-when">from {fmtDay(start)}{periods[0]?.to ? `, to ${fmtDay(periods[0].to)}` : ""}</span>}
-          </div>
-          {freq !== "once" && steps.map((x, n) => (
-            <div key={n} className={`amt-step ${nowAt === n + 1 ? "is-now" : ""}`}>
-              <input value={x.amount} onChange={(e) => setSteps(steps.map((y, m) => (m === n ? { ...y, amount: e.target.value } : y)))} inputMode="decimal" placeholder="₹" aria-label={`Amount from change ${n + 1}`} aria-invalid={!!x.amount && parseAmount(x.amount) === null} />
-              <span className="amt-when">
-                from <input type="date" className="input-inline" value={x.from} min={start} max={end || undefined} aria-label={`Change ${n + 1} starts on`} onChange={(e) => setSteps(steps.map((y, m) => (m === n ? { ...y, from: e.target.value } : y)))} />
-                {x.from && untilOf(x.from)}
-              </span>
-              <button type="button" className="icon-btn" aria-label={`Remove change ${n + 1}`} title="Remove" onClick={() => setSteps(steps.filter((_, m) => m !== n))}>✕</button>
-            </div>
-          ))}
-        </div>
-        {freq !== "once" && money.steps && (
-          <button type="button" className="chip chip-dashed amt-add" onClick={() => setSteps([...steps, { from: "", amount: "" }])}>＋ Change the amount from a date</button>
-        )}
-        {isLoan && emiOwn && usual !== null && value !== usual && <button type="button" className="chip chip-dashed amt-add" onClick={() => setEmiOwn(false)}>Use the usual EMI, {inr(usual)}</button>}
-        {isLoan && !emiOwn && <span className="hint">Worked out from the loan.</span>}
-      </fieldset>}
-      {isLoan && (
-        <>
-          {curve && (
-            <div className="loan-chart" role="img" aria-label={`What is owed falls to nothing by ${stands?.ends ? DateTime.fromISO(stands.ends).toFormat("LLLL yyyy") : "the end"}`}>
-              <svg viewBox="0 0 100 32" preserveAspectRatio="none">
-                <polygon points={curve.area} />
-                <polyline points={curve.line} vectorEffect="non-scaling-stroke" />
-                <line x1={curve.at} x2={curve.at} y1="0" y2="32" vectorEffect="non-scaling-stroke" />
-              </svg>
-            </div>
-          )}
-          {stands && (
-            <dl className="loan-facts" aria-live="polite">
-              <div><dt>Owed today</dt><dd>{inr(stands.balance)}</dd></div>
-              <div><dt>Interest in all</dt><dd>{stands.endless ? "—" : inr(stands.interest)}</dd></div>
-              <div><dt>Ends</dt><dd>{stands.endless || !stands.ends ? "never" : DateTime.fromISO(stands.ends).toFormat("LLL yyyy")}</dd></div>
-            </dl>
-          )}
-          {stands?.endless && <div className="alert alert-warn">This EMI does not cover the month’s interest, so the loan never ends. Raise the EMI.</div>}
-          <fieldset className="field">
-            <legend>Lender’s balance <span className="muted">(optional)</span></legend>
-            <div className="field-row">
-              <input value={owed} onChange={(e) => setOwed(e.target.value)} inputMode="decimal" placeholder="₹ still owed" aria-label="Balance the lender shows" />
-              <input type="date" value={owedOn} max={todayIso} onChange={(e) => setOwedOn(e.target.value)} aria-label="Date of that balance" />
-            </div>
-          </fieldset>
-        </>
-      )}
-      <fieldset className="field">
-        <legend><Named icon="bank">Bank</Named></legend>
-        <div className="chips chips-xs" id="money-bank" style={{ marginTop: 0 }}>
-          {money.banks.filter((b) => !b.archived_at || b.id === bank).map((b) => {
-            const tone = bankTone.get(b.id);
-            return <button type="button" key={b.id} className={`chip act-${tone} ${bank === b.id ? "is-selected" : ""}`} aria-pressed={bank === b.id} onClick={() => setBank(b.id)}><span className={`kit-mono is-mini act-${tone}`} aria-hidden>{b.name.trim()[0]?.toUpperCase()}</span>{b.name}</button>;
-          })}
-          {canEdit && <button type="button" className="chip chip-dashed" aria-label="New bank" title="New bank" aria-expanded={adding?.what === "bank"} onClick={() => setAdding({ what: "bank", name: "", balance: "" })}>＋</button>}
-        </div>
-        {adder("bank")}
-      </fieldset>
-      <fieldset className="field">
-        <legend><Named icon="tag">{expense ? "Expense type" : "Income type"}</Named></legend>
-        <div className="chips chips-xs" id="money-type" style={{ marginTop: 0 }}>
-          {money.types.filter((t) => t.kind === kind && (!t.archived_at || t.id === type)).map((t) => {
-            const tone = typeTone.get(t.id);
-            return <button type="button" key={t.id} className={`chip act-${tone} ${type === t.id ? "is-selected" : ""}`} aria-pressed={type === t.id} onClick={() => setType(t.id)}><span className={`kit-mono is-mini act-${tone}`} aria-hidden>{t.name.trim()[0]?.toUpperCase()}</span>{t.name}</button>;
-          })}
-          {canEdit && <button type="button" className="chip chip-dashed" aria-label="New type" title="New type" aria-expanded={adding?.what === "type"} onClick={() => setAdding({ what: "type", name: "", balance: "" })}>＋</button>}
-        </div>
-        {adder("type")}
-      </fieldset>
-      {freq !== "once" && !isComputed && (
-        <fieldset className="field">
-          <legend><Named icon="trend">Yearly increase</Named></legend>
-          <div className="chips chips-xs" id="money-increase" style={{ marginTop: 0 }}>
-            <button type="button" className={`chip ${!increase ? "is-selected" : ""}`} aria-pressed={!increase} onClick={() => setIncrease("")}>None</button>
-            {money.increases.filter((i) => !i.archived_at || i.id === increase).map((i) => (
-              <button type="button" key={i.id} className={`chip ${increase === i.id ? "is-selected" : ""}`} aria-pressed={increase === i.id} title={i.name} onClick={() => setIncrease(i.id)}><strong>{Number(i.percent)}%</strong>{i.name}</button>
-            ))}
-          </div>
-        </fieldset>
-      )}
-      {family.length > 0 && (
-        <fieldset className="field">
-          <legend><Named icon="people">{expense ? "Incurred for" : "Received by"}</Named></legend>
-          <div className="chips chips-xs" style={{ marginTop: 0 }}>
-            {family.map((p) => {
-              const on = people.includes(p.id);
-              return <button type="button" key={p.id} className={`chip act-${personTone.get(p.id)} ${on ? "is-selected" : ""}`} aria-pressed={on} onClick={() => setPeople(on ? people.filter((x) => x !== p.id) : [...people, p.id])}><span className={`kit-mono is-mini is-round act-${personTone.get(p.id)}`} aria-hidden>{p.name.trim()[0]?.toUpperCase()}</span>{p.name}</button>;
-            })}
-          </div>
-          {people.length > 1 && value !== null && <span className="hint">Split equally: {inr(Math.round((value / people.length) * 100) / 100)} each.</span>}
-        </fieldset>
-      )}
-      <label className="field"><span><Named icon="note">Notes</Named></span><textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></label>
       </fieldset>
 
       {error && <div className="alert alert-error" role="alert">{error}</div>}

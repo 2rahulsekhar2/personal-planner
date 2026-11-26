@@ -261,8 +261,18 @@ button.avatar:hover { background: var(--accent-hover); }
 .toolbar-group { display: flex; gap: 6px; }
 .toolbar-title { font-size: 20px; font-weight: 600; flex: 1; }
 /* Week view: one slim row, so the grid gets the height. */
-.toolbar-compact { gap: 2px; margin-bottom: 8px; flex-wrap: nowrap; }
+.toolbar-compact { gap: 6px; margin-bottom: 8px; flex-wrap: nowrap; }
+/* Day sits at the same height as Week, so the Mine / circle chips under it do not jump between the two. */
+.agenda > .toolbar { margin-bottom: 8px; }
 .toolbar-compact .toolbar-title { flex: 0 1 auto; order: 0; font-size: 16px; white-space: nowrap; padding: 0 4px; }
+/* Both arrows come first and the range after them, so the arrows stay put however long the range reads. */
+.toolbar-compact .toolbar-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+.toolbar-compact .heading-pick { margin: -2px 0; padding: 2px 0; }
+.toolbar-compact .heading-caret { margin-left: 3px; }
+/* The week's two ends, each with its year small beneath it, so the range is the same width in every week. */
+.range-pick { display: inline-flex; align-items: flex-start; gap: 4px; line-height: 1.1; font-size: 15px; }
+.range-end { display: inline-flex; flex-direction: column; min-width: 3.6em; text-align: left; }
+.range-end small { font-size: 10px; font-weight: 500; letter-spacing: .06em; color: var(--muted); }
 .toolbar-end { margin-left: auto; }
 
 /* ---------- Week grid ---------- */
@@ -342,6 +352,7 @@ button.avatar:hover { background: var(--accent-hover); }
 .mini-day:hover { background: var(--surface-2); }
 .mini-day.is-out { color: var(--muted); }
 .mini-day.is-week { background: var(--surface-2); }
+.mini-day.is-picked { box-shadow: inset 0 0 0 1.5px var(--accent); border-radius: 8px; font-weight: 600; }
 .mini-day.is-today { background: var(--accent); color: var(--accent-ink); font-weight: 600; border-radius: 8px; }
 .side-row { display: flex; align-items: center; gap: 6px; width: 100%; border: 0; background: none; padding: 4px 0; cursor: pointer; text-align: left; }
 /* An activity in the sidebar wears its own colour, as on the Activities page. */
@@ -399,6 +410,16 @@ button.avatar:hover { background: var(--accent-hover); }
 /* A bill can be unticked again, unlike a finished task. */
 .day-bill.is-done .day-task-check:not(:disabled) { cursor: pointer; }
 .agenda-heading { font-size: 22px; margin: 4px 0 16px; }
+/* Jump to a day: a heading or a toolbar button that opens a month under the toolbar or heading it sits in. */
+.toolbar, .agenda-heading { position: relative; }
+.heading-pick { border: 0; background: none; padding: 2px 6px; margin: -2px -6px; border-radius: 10px; font: inherit; color: inherit; cursor: pointer; text-align: left; }
+.heading-pick:hover { background: color-mix(in srgb, var(--surface-2) 70%, transparent); }
+.heading-caret { margin-left: 6px; font-size: .65em; color: var(--muted); vertical-align: middle; }
+.day-pick-pop { position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; width: min(280px, 100%); padding: 12px; font-size: 14px; font-weight: 400; }
+.day-pick-pop .mini-grid { font-size: 13px; }
+.day-pick-pop .mini-day { padding: 8px 0; border-radius: 8px; color: inherit; }
+.day-pick-pop .mini-day.is-out { color: var(--muted); }
+.day-pick-pop .mini-day.is-today { color: var(--accent-ink); }
 .agenda-heading .muted { font-size: 15px; font-weight: 400; margin-left: 6px; }
 .agenda-list { display: flex; flex-direction: column; gap: 8px; }
 .agenda-appt {
@@ -691,9 +712,6 @@ textarea { resize: vertical; }
 .form .day-bar-wrap { margin: 10px 0 0; }
 /* The appointment being written, outlined on the day's bar. */
 .day-bar-ghost { position: absolute; top: 0; bottom: 0; min-width: 4px; border: 2px dashed var(--accent); border-radius: 5px; background: color-mix(in srgb, var(--accent) 22%, transparent); }
-.more-toggle { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.more-toggle .chips { margin: 0; }
-.more-toggle .chip { cursor: inherit; font-weight: 400; }
 .due-time { margin-top: 8px; }
 .time-row { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 10px; margin-top: 8px; }
 /* Save stays in reach at the bottom of the panel while the form scrolls. */
@@ -702,6 +720,30 @@ textarea { resize: vertical; }
   background: var(--surface); border-top: 1px solid var(--line);
 }
 .panel .form > .form-actions .btn-primary { flex: 1; min-height: 44px; }
+/* The appointment form as a route: a line down the left with a stop for each question (What, When, Where, Who).
+   A stop's mark, and the line leaving it, take the activity's colour once it is answered: what is still open shows unread. */
+.steps { display: flex; flex-direction: column; }
+.step { position: relative; display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 0 0 22px 40px; }
+.step::before { content: ""; position: absolute; left: 13px; top: 31px; bottom: 3px; width: 2px; border-radius: 1px; background: var(--line); transition: background-color .2s; }
+.step.is-set::before { background: var(--a-bd); }
+.step:last-child { padding-bottom: 4px; }
+.step:last-child::before { display: none; }
+.step > h3 { font-size: 15px; line-height: 28px; }
+.step-mark { position: absolute; left: 0; top: 0; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; border: 1.5px dashed var(--line-2); color: var(--muted); transition: background-color .2s, border-color .2s; }
+.step.is-set .step-mark { border: 1.5px solid var(--a-bd); background: var(--a-bg); color: var(--a-ink); }
+.step .status-pick { grid-template-columns: 1fr 1fr; }
+.step .chips-xs, .step .time-row, .step .subform, .step .day-bar-wrap, .step .hint { margin-top: 0; }
+/* Saving a typed activity: the chip opens into the colours, and choosing one saves it. */
+.chips-xs .chip.type-colors { min-height: 34px; padding: 0 4px 0 8px; cursor: default; }
+.type-colors .color-dot { width: 22px; height: 22px; }
+.type-colors.is-busy { padding-right: 10px; }
+.type-colors.is-busy .color-dot:not(.is-selected) { opacity: .3; pointer-events: none; }
+/* A saved activity in the field wears its colour, with its dot in front; a one-off stays plain text. */
+.step input.activity-saved {
+  padding-left: 30px; border-color: var(--a-bd); font-weight: 600;
+  background: radial-gradient(circle at 16px 50%, var(--a-bg) 0 5px, var(--a-bd) 5px 6px, transparent 6.5px), color-mix(in srgb, var(--a-bg) 16%, var(--surface));
+}
+@media (prefers-reduced-motion: reduce) { .step::before, .step-mark { transition: none; } }
 .details-head.status-tentative { background: transparent; color: var(--ink); border: 1.5px dashed var(--a-bd); }
 .details-head.status-cancelled { background: var(--surface-2); color: var(--muted); }
 /* Details rows: an icon column, then the content at full width. */
@@ -758,20 +800,21 @@ p.outcome-reason { display: block; }
 /* The year: a row an item, a column a month. A filled cell is a month the item falls due, in its type's colour:
    solid once paid or received, faint while still to come. The names stay put while the months scroll under them. */
 .page.is-wide { max-width: 1360px; }
-/* One bar above the grid: the months on show on the left, whose budget on the right. */
-.yr-bar { margin: 0; gap: 8px; }
-.yr-bar .toolbar-title { flex: 0 1 auto; font-size: 17px; }
-.yr-bar .scope-bar { margin: 0; }
-.yr-scope { margin-left: auto; }
+/* One bar above the page, as on the Time side: arrows and the months on show on the left, the sections on the right.
+   Whose budget is the line of chips under it. */
+.yr-bar { margin: 0; gap: 6px; }
+.yr-bar .toolbar-title { flex: 0 1 auto; font-size: 16px; padding: 0 4px; }
+/* A month name is shorter than Time's "26 Nov": only as wide as the widest three-letter month, so nothing shifts from month to month. */
+.yr-bar .range-end { min-width: 2.3em; }
+.yr-bar + .scope-bar { margin: -8px 0 0; } /* 8px under the bar, as on the Time side, inside the page's 16px gaps */
 .yr-narrow { display: none; }
 /* A section or a budget as one small button that opens its list. */
 .yr-pick .select-btn { min-height: 30px; padding: 0 6px 0 10px; gap: 2px; border-radius: 999px; border-color: transparent; background: var(--surface-2); font-size: 13px; font-weight: 600; }
 .yr-pick .select-pop { min-width: 150px; }
-/* The section menu ends the bar: pushed right on its own, or sitting after the budget menu when there is one. */
+/* The sections end the bar. */
 .yr-section { margin-left: auto; }
-.yr-narrow.yr-scope ~ .yr-section { margin-left: 0; }
 /* The grid scrolls inside itself, both ways, in what is left of the screen: the bar above it and the months' names stay where they are. */
-.yr { padding: 0; overflow: auto; max-height: calc(100dvh - var(--yr-above, 196px)); min-height: 240px; overscroll-behavior: contain; background: none; border-color: transparent; box-shadow: none; }
+.yr { padding: 0; overflow: auto; max-height: calc(100dvh - var(--yr-above, 230px)); min-height: 240px; overscroll-behavior: contain; background: none; border-color: transparent; box-shadow: none; }
 .yr table { width: 100%; border-collapse: separate; border-spacing: 0; font-size: 12px; font-variant-numeric: tabular-nums; }
 /* The card's surface is on the cells, not behind them, so the break between income and expenses can show the page through. */
 .yr th, .yr td { background: var(--surface); padding: 1px 2px; text-align: right; white-space: nowrap; font-weight: 400; border-bottom: 1px solid var(--line); }
@@ -849,12 +892,9 @@ button.yr-month:hover { background: var(--surface-2); color: var(--ink); }
 .yr-add:hover, .yr-add:focus-visible { background: var(--surface-2); color: var(--muted); }
 .yr-key { margin: 0; }
 @media (max-width: 899px) {
-  .yr { --yr-above: 240px; } /* the bar above, and the key and the bottom bar below */
+  .yr { --yr-above: 274px; } /* the bar above, and the key and the bottom bar below */
   /* The bar stays on one line: smaller arrows and title, in the order they are written. */
-  .yr-bar { gap: 6px; }
-  .yr-bar .toolbar-group { gap: 4px; }
-  .yr-bar .btn { min-height: 30px; min-width: 30px; padding: 0 8px; }
-  .yr-bar .toolbar-title { order: 0; flex-basis: auto; font-size: 14px; white-space: nowrap; }
+  .yr-bar .toolbar-title { order: 0; flex-basis: auto; white-space: nowrap; }
   .yr-bar { flex-wrap: nowrap; }
   .yr-bar .yr-wide { display: none; }
   .yr-bar .yr-narrow { display: revert; }
@@ -886,6 +926,17 @@ button.yr-month:hover { background: var(--surface-2); color: var(--ink); }
 /* A section heading with its dots: one a line, filled once paid or received. */
 .line-head .bank-dots { flex: 1; margin: 0; padding: 0; border: 0; }
 /* A settled line's box is filled, so paid and unpaid tell apart down the column without reading. */
+/* A line picked up to be moved: lifted off the list, in the accent. */
+.money-lines .task-row.is-moving { position: relative; z-index: 1; margin: 0 -8px; padding-left: 8px; padding-right: 8px; border-radius: 12px; border-bottom-color: transparent; background: var(--accent-soft); box-shadow: 0 0 0 1.5px var(--accent), var(--shadow); cursor: grabbing; touch-action: none; }
+.move-keys { display: inline-flex; gap: 2px; flex-shrink: 0; }
+.move-keys .icon-btn { width: 30px; height: 30px; }
+.line-menu { position: fixed; right: auto; width: 160px; transform-origin: top left; }
+.line-menu .add-item { padding: 8px 10px; gap: 10px; }
+/* On a touch screen a held press picks the line up: it must not select its text or open the browser's own menu, and a finger needs no arrows. */
+@media (pointer: coarse) {
+  .money-lines .task-row[data-id] { -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+  .move-keys { display: none; }
+}
 .money-lines .task-check { padding: 0; border-radius: 50%; border-color: var(--line-2); }
 .money-lines .task-check:hover:not(:disabled) { border-color: var(--ok); }
 .money-lines .task-check.is-checked { background: var(--ok); border-color: var(--ok); color: var(--surface); }

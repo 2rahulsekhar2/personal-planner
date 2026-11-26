@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import DayPicker from "./DayPicker";
 import SlotMenu, { type Slot } from "./SlotMenu";
 import { DateTime } from "luxon";
 import type { PlannerCtx } from "./usePlanner";
@@ -153,17 +154,16 @@ export default function WeekView({
   const nowTop = ((nowL.hour * 60 + nowL.minute - startHour * 60) / 60) * HOUR_PX;
 
 
-  // "21 – 27 Nov", or "28 Nov – 4 Dec" across months; the year only when it is not this year.
+  // Each end of the week reads the same length every week: "05 Dec" with its year small underneath.
   const we = ws.plus({ days: 6 });
-  const rangeLabel = `${ws.toFormat(ws.month === we.month ? "d" : "d LLL")} – ${we.toFormat(we.year === nowL.year ? "d LLL" : "d LLL yyyy")}`;
+  const rangeEnd = (x: DateTime) => <span className="range-end">{x.toFormat("dd LLL")}<small>{x.toFormat("yyyy")}</small></span>;
 
   return (
     <div className="week">
       <div className="toolbar toolbar-compact">
-        <button className="btn btn-sm btn-ghost" onClick={() => setDay(ws.minus({ weeks: 1 }).toISODate()!)} aria-label="Previous week">‹</button>
-        <h1 className="toolbar-title">{rangeLabel}</h1>
-        <button className="btn btn-sm btn-ghost" onClick={() => setDay(ws.plus({ weeks: 1 }).toISODate()!)} aria-label="Next week">›</button>
-        <button className="btn btn-sm btn-ghost toolbar-end" onClick={() => setDay(today)}>Today</button>
+        <button className="btn" onClick={() => setDay(ws.minus({ weeks: 1 }).toISODate()!)} aria-label="Previous week">‹</button>
+        <button className="btn" onClick={() => setDay(ws.plus({ weeks: 1 }).toISODate()!)} aria-label="Next week">›</button>
+        <h1 className="toolbar-title"><DayPicker day={day} tz={tz} onPick={setDay} className="heading-pick range-pick">{rangeEnd(ws)}<span aria-hidden>–</span><span className="sr-only">to</span>{rangeEnd(we)}<span className="heading-caret" aria-hidden>▾</span></DayPicker></h1>
         {toggle}
       </div>
       {scopeBar}
