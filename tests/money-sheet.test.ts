@@ -70,6 +70,21 @@ describe("reading a budget sheet", () => {
     expect(data.money_increases).toMatchObject([{ name: "10% a year", percent: 10 }]);
   });
 
+  it("keeps a row as one item, with lasting changes of amount dated and stray figures apart", () => {
+    const rows: Cell[][] = [SHEET[0], SHEET[1], ["OUTFLOW"],
+      // A monthly EMI with a stray figure far after it.
+      line("Mobile Loan - 5th", "EMI_LOAN", "HDFC Bank", null, null, (ym) => (ym <= "2027-06" ? 3590 : ym === "2028-05" ? 1 : null)),
+      // A subscription that goes up for good in March, with one dearer month in between.
+      line("Hotstar - 16th", "GE", "HDFC Bank", null, null, (ym) => (ym < "2027-03" ? 179 : ym === "2027-09" ? 1500 : 299)),
+    ];
+    const { data } = sheetToMoney(rows, {}, NOW);
+    const of = (name: string) => data.money_items.filter((i) => i.name === name);
+    expect(of("Mobile Loan - 5th").map((i) => [i.freq, i.amount, i.start_date])).toEqual([["monthly", 3590, "2026-07-05"], ["once", 1, "2028-05-05"]]);
+    expect(of("Hotstar - 16th")).toHaveLength(1);
+    expect(of("Hotstar - 16th")[0]).toMatchObject({ freq: "monthly", amount: 179, amount_steps: [{ from: "2027-03-16", amount: 299 }] });
+    for (const ym of MONTHS) expect(figures(data, ym)["Hotstar - 16th"], ym).toBe(rows[4][5 + MONTHS.indexOf(ym)]);
+  });
+
   it("refuses a sheet that is not a budget", () => {
     expect(() => sheetToMoney([["Name", "Phone"]], {}, NOW)).toThrow(/budget sheet/);
   });

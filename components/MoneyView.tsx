@@ -722,12 +722,17 @@ function Items({ view, today, canEdit, onOpen, onNew }: { view: MoneyCtx; today:
       </li>
     );
   };
-  const section = (kind: MoneyKind) => {
-    const list = tops.filter((i) => i.kind === kind).sort(heavy).flatMap((i) => under(i, 0));
+  // Closed: past its last date, or a loan paid off. These go in a section of their own, latest to end first.
+  const closed = (i: Item) => facts.get(i.id)!.ended || facts.get(i.id)!.owes === 0;
+  const lastDay = (i: Item) => i.end_date ?? "";
+  const section = (kind: MoneyKind | "closed") => {
+    const list = kind === "closed"
+      ? tops.filter(closed).sort((a, b) => lastDay(b).localeCompare(lastDay(a)) || a.name.localeCompare(b.name)).flatMap((i) => under(i, 0))
+      : tops.filter((i) => i.kind === kind && !closed(i)).sort(heavy).flatMap((i) => under(i, 0));
     if (!list.length) return null;
     return (
       <section key={kind} className="items-kind">
-        <h2><span className={`kit-way ${kind === "income" ? "is-in" : "is-out"}`} aria-hidden><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={kind === "income" ? "M12 5v14M6 13l6 6 6-6" : "M12 19V5M6 11l6-6 6 6"} /></svg></span>{kind === "income" ? "Income" : "Expenses"}</h2>
+        <h2><span className={`kit-way ${kind === "income" ? "is-in" : kind === "expense" ? "is-out" : ""}`} aria-hidden><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={kind === "income" ? "M12 5v14M6 13l6 6 6-6" : kind === "expense" ? "M12 19V5M6 11l6-6 6 6" : "M5 12h14"} /></svg></span>{kind === "income" ? "Income" : kind === "expense" ? "Expenses" : "Closed"}</h2>
         <ul className="card list items-list">{list.map(row)}</ul>
       </section>
     );
@@ -766,7 +771,7 @@ function Items({ view, today, canEdit, onOpen, onNew }: { view: MoneyCtx; today:
       </div>
       {shown.length === 0
         ? <p className="empty card">{view.items.length === 0 ? "No items yet. An item is one income or expense, with how much and how often." : "Nothing matches."}</p>
-        : <>{section("income")}{section("expense")}</>}
+        : <>{section("income")}{section("expense")}{section("closed")}</>}
     </>
   );
 }
