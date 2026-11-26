@@ -30,6 +30,21 @@ export interface MoneyItem {
   increase_id: string | null;
   person_ids: string[];
   notes: string | null;
+  // Its place in its list, set by moving it by hand. Absent until 0024_money_item_order.sql has been run.
+  sort_order?: number | null;
+}
+
+/** Lines in the order set by hand: placed ones first, lowest place first; the rest after them, kept as they came. */
+export function byPlace<T extends { item: { sort_order?: number | null } }>(lines: T[]): T[] {
+  const at = (l: T) => l.item.sort_order ?? Infinity;
+  return lines.map((l, i) => [l, i] as const).sort((a, b) => (at(a[0]) === at(b[0]) ? a[1] - b[1] : at(a[0]) - at(b[0]))).map(([l]) => l);
+}
+
+/** `ids` with `id` taken out and put back at place `to` (0 is first; past the end is last). */
+export function movedTo(ids: string[], id: string, to: number): string[] {
+  const rest = ids.filter((x) => x !== id);
+  rest.splice(Math.max(0, Math.min(rest.length, to)), 0, id);
+  return rest;
 }
 
 /** A change of an item's amount from a date on. It holds until the next change, or the item's last date. */
@@ -266,8 +281,28 @@ export function evalFormula(tokens: FormulaToken[], valueOf: (id: string) => num
 
 /** The ids of the items a formula uses. */
 export const formulaItems = (tokens: FormulaToken[] | null | undefined) => (tokens ?? []).flatMap((t) => (t.t === "item" ? [t.id] : []));
-/** The ids of every item used in some other item's formula: parts, which are not lines of their own. */
-export const partIds = (items: Pick<MoneyItem, "formula">[]) => new Set(items.flatMap((i) => formulaItems(i.formula)));
+type Twin = Pick<MoneyItem, "id" | "kind" | "name" | "freq" | "type_id" | "bank_id" | "formula"> & { circle_id?: string | null };
+/**
+ * One-time items of one name, type and bank are one thing said month by month: an import leaves a row that is
+ * filled in only now and then as an item for each of its months. This is what they share; null for any other item.
+ */
+const twinKey = (i: Twin) => (i.freq === "once" && !i.formula ? `${i.kind}|${i.circle_id ?? ""}|${i.name.trim().toLowerCase()}|${i.type_id}|${i.bank_id}` : null);
+/** Each such item's key, with every item that has it. */
+function twinsOf<T extends Twin>(items: T[]): Map<string, T[]> {
+  const by = new Map<string, T[]>();
+  for (const i of items) { const k = twinKey(i); if (k) by.set(k, [...(by.get(k) ?? []), i]); }
+  return by;
+}
+/**
+ * The ids of every item used in some other item's formula: parts, which are not lines of their own.
+ * A one-time item used there takes its twins with it, since the formula reads whichever of them the month has.
+ */
+export function partIds(items: Twin[]): Set<string> {
+  const used = new Set(items.flatMap((i) => formulaItems(i.formula)));
+  const twins = twinsOf(items);
+  for (const i of items) if (used.has(i.id)) for (const t of twins.get(twinKey(i) ?? "") ?? []) used.add(t.id);
+  return used;
+}
 /** True when `id`'s formula would, through the items it uses, come back to `id`. */
 export function formulaLoops(id: string, tokens: FormulaToken[], items: Pick<MoneyItem, "id" | "formula">[]): boolean {
   const byId = new Map(items.map((i) => [i.id, i]));
@@ -287,6 +322,12 @@ export function monthLines(items: MoneyItem[], entries: MoneyEntry[], increases:
   const byItem = new Map(entries.filter((e) => e.month.slice(0, 7) === ym).map((e) => [e.item_id, e]));
   const byId = new Map(items.map((i) => [i.id, i]));
   const made = new Map<string, Line | null>();
+  const twins = twinsOf(items);
+  // What a formula means by an item, this month: the item itself, or for a one-time item its twin that falls in the month.
+  const meant = (id: string) => {
+    const it = byId.get(id);
+    return it && ((twins.get(twinKey(it) ?? "") ?? []).find((t) => datesInMonth(t, ym).length > 0) ?? it);
+  };
   // An item's line this month, or null when it is not due. `above`: the computed items being worked out, to catch a loop.
   const lineOf = (item: MoneyItem, above: string[]): Line | null => {
     if (made.has(item.id)) return made.get(item.id)!;
@@ -303,9 +344,10 @@ export function monthLines(items: MoneyItem[], entries: MoneyEntry[], increases:
       // Computed: the formula over its parts' budgets, and again over what they really came to once any of them is known.
       const used = [...new Set(formulaItems(item.formula))];
       const loop = above.includes(item.id);
-      const found = loop ? [] : used.map((id) => { const part = byId.get(id); return part ? lineOf(part, [...above, item.id]) : null; });
-      const parts = found.filter((l): l is Line => !!l);
-      const live = new Map(parts.filter((l) => !l.skipped).map((l) => [l.item.id, l]));
+      const found = loop ? [] : used.map((id) => { const part = meant(id); return part ? lineOf(part, [...above, item.id]) : null; });
+      const parts = [...new Set(found.filter((l): l is Line => !!l))];
+      // Looked up by the id the formula holds, whichever twin answered for it this month.
+      const live = new Map(used.flatMap((id, n) => { const l = found[n]; return l && !l.skipped ? [[id, l] as const] : []; }));
       const plan = evalFormula(item.formula!, (id) => live.get(id)?.budget ?? 0);
       const real = evalFormula(item.formula!, (id) => { const l = live.get(id); return l ? expected(l) : 0; });
       const warn = loop ? "Its formula uses itself." : plan.error === "syntax" ? "Its formula is not complete." : plan.error === "zero" ? "Its formula divides by zero." : used.some((id) => !byId.has(id)) ? "Its formula uses an item that is gone." : plan.value < 0 ? "Its formula comes to less than zero." : undefined;
@@ -418,4 +460,19 @@ export const inr = (n: number) => (Number.isInteger(n) ? whole : paise).format(n
 export function parseAmount(text: string): number | null {
   const n = Number(text.replace(/[₹,\s]/g, ""));
   return text.trim() && Number.isFinite(n) && n >= 0 && n < 1e12 ? round2(n) : null;
+}
+
+/**
+ * One item for each name, in the order the names first come. Where several items share a name (an import can
+ * leave one for every month), the one due in `ym` stands for them; failing that, the one that started last.
+ */
+export function oneAName<T extends Pick<MoneyItem, "name" | "freq" | "start_date" | "end_date">>(items: T[], ym: string): T[] {
+  const best = new Map<string, T>();
+  const due = (i: T) => datesInMonth(i, ym).length > 0;
+  for (const i of items) {
+    const key = i.name.trim().toLowerCase();
+    const had = best.get(key);
+    if (!had || (due(i) && !due(had)) || (due(i) === due(had) && i.start_date > had.start_date)) best.set(key, i);
+  }
+  return [...best.values()];
 }

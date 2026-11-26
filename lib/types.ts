@@ -43,6 +43,8 @@ export interface Appointment {
   team: string | null;
   notes: string | null;
   reminder_minutes: number | null;
+  // Further reminders, besides the one above. Absent until supabase/migrations/0023_multi_reminders.sql has been run.
+  extra_reminder_minutes?: number[];
   // Set by the user afterwards. Absent until supabase/migrations/0002_appointment_outcome.sql has been run.
   outcome?: "done" | "not_done" | null;
   outcome_reason?: string | null;
@@ -64,6 +66,7 @@ export interface Task {
   due_date: string; // yyyy-MM-dd
   due_time: string | null; // HH:mm[:ss]
   notify_at: string | null;
+  extra_notify_at?: string[]; // further reminders; absent until 0023_multi_reminders.sql has been run
   notes: string | null;
   state: TaskState;
   completed_at: string | null;
@@ -109,4 +112,29 @@ export function reminderLabel(minutes: number | null): string {
   if (minutes === null) return "No reminder";
   const p = reminderParts(minutes);
   return p ? `${p.amount} ${p.amount === 1 ? REMINDER_UNITS[p.unit].one : p.unit} before` : "At start time";
+}
+
+/** "At start", "15 min", "2 h", "1 d": a reminder small enough for a chip. */
+export function reminderShort(minutes: number): string {
+  const p = reminderParts(minutes);
+  return p ? `${p.amount} ${{ minutes: "min", hours: "h", days: "d" }[p.unit]}` : "At start";
+}
+
+// One appointment or task holds up to this many reminders. The database allows the same: one, and four more.
+export const MAX_REMINDERS = 5;
+
+/** Several reminders as one tidy list: no repeats, smallest first, never more than MAX_REMINDERS. For minutes before the start, or UTC ISO times. */
+export function tidyReminders<T extends number | string>(list: (T | null | undefined)[]): T[] {
+  const kept = list.filter((x): x is T => x !== null && x !== undefined);
+  return [...new Set(kept)].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)).slice(0, MAX_REMINDERS);
+}
+
+/** How the database holds them: the first in the column that was always there, the others in the list beside it. */
+export function splitReminders<T>(list: T[]): { first: T | null; rest: T[] } {
+  return { first: list.length ? list[0] : null, rest: list.slice(1) };
+}
+
+/** How many whole minutes `at` falls before `ref` (both ISO times); 0 when it is at or after it. Turns a task's stored reminder time into "minutes before it is due". */
+export function minutesBefore(ref: string, at: string): number {
+  return Math.max(0, Math.round((Date.parse(ref) - Date.parse(at)) / 60000));
 }

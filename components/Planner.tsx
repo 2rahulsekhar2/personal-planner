@@ -41,7 +41,7 @@ function ViewToggle({ view, onChange }: { view: View; onChange: (v: View) => voi
   return (
     <div className="view-toggle" role="group" aria-label="Calendar view">
       {(["week", "agenda"] as const).map((v) => (
-        <button key={v} className={view === v ? "is-active" : ""} aria-pressed={view === v} onClick={() => onChange(v)}>{v === "week" ? "Week" : "Day"}</button>
+        <button key={v} className={view === v ? "is-active" : ""} aria-pressed={view === v} title={view !== v ? undefined : v === "week" ? "Go to this week" : "Go to today"} onClick={() => onChange(v)}>{v === "week" ? "Week" : "Day"}</button>
       ))}
     </div>
   );
@@ -169,8 +169,8 @@ export default function Planner() {
   // The calendar view last used (Week or Day): where the brand, and saving an appointment, return to.
   const calView = useRef<View>("agenda");
   if (view === "week" || view === "agenda") calView.current = view;
-  // Switching to Day lands on today.
-  const toggle = view ? <ViewToggle view={view} onChange={(v) => { if (v === "agenda") setDay(todayISO(tz)); setView(v); }} /> : null;
+  // Switching to Day lands on today. Pressing Week while already in Week goes back to this week: it stands in for a Today button.
+  const toggle = view ? <ViewToggle view={view} onChange={(v) => { if (v === "agenda" || v === view) setDay(todayISO(tz)); setView(v); }} /> : null;
 
   // After saving an appointment: close the form and show its day on the calendar.
   const showSaved = (date?: string) => {

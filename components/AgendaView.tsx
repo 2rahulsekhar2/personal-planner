@@ -1,5 +1,6 @@
 "use client";
 import { useCallback, useState } from "react";
+import DayPicker from "./DayPicker";
 import { DateTime } from "luxon";
 import SlotMenu, { type Slot } from "./SlotMenu";
 import type { PlannerCtx } from "./usePlanner";
@@ -127,8 +128,10 @@ export default function AgendaView({
       <div className="toolbar">
         <div className="toolbar-group">
           <button className="btn" onClick={() => setDay(d.minus({ days: 1 }).toISODate()!)} aria-label="Previous day">‹</button>
-          <button className="btn" onClick={() => setDay(today)}>Today</button>
           <button className="btn" onClick={() => setDay(d.plus({ days: 1 }).toISODate()!)} aria-label="Next day">›</button>
+          <DayPicker day={day} tz={tz} onPick={setDay} className="btn" label="Choose a date">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden><path d="M4.5 6.500h15v13h-15zM4.500 10.500h15M8.500 4v4M15.500 4v4" /></svg>
+          </DayPicker>
         </div>
         <span className="toolbar-end">{toggle}</span>
       </div>
@@ -146,8 +149,11 @@ export default function AgendaView({
         })}
       </div>
 
+      {/* The heading is also the way to any other day: it opens a month. */}
       <h1 className="agenda-heading">
-        {relativeDayLabel(day, tz)} <span className="muted">{d.toFormat("cccc, d LLLL")}</span>
+        <DayPicker day={day} tz={tz} onPick={setDay} className="heading-pick">
+          {relativeDayLabel(day, tz)} <span className="muted">{d.toFormat(d.year === DateTime.fromISO(today).year ? "cccc, d LLLL" : "cccc, d LLLL yyyy")}</span><span className="heading-caret" aria-hidden>▾</span>
+        </DayPicker>
       </h1>
 
       <DayBar appts={active} typeById={typeById} day={day} tz={tz} />

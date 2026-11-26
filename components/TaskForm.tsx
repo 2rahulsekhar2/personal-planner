@@ -3,24 +3,32 @@ import { useRef, useState } from "react";
 import { DateTime } from "luxon";
 import type { PlannerCtx } from "./usePlanner";
 import type { Task } from "@/lib/types";
+import { minutesBefore, splitReminders, tidyReminders } from "@/lib/types";
+import ReminderChips from "./ReminderChips";
 import { isCurrent, seatsOf, type Circle } from "@/lib/circles";
 import { hhmm, isTaskOverdue, localToDateTime, todayISO } from "@/lib/time";
 import { expandRule, toRule, NO_REPEAT, type RepeatChoice } from "@/lib/recurrence";
 import RepeatPicker from "./RepeatPicker";
-import { Named } from "./FormBits";
+import { Named, Step } from "./FormBits";
 
 export default function TaskForm({ ctx, circles, circleId: startCircle, existing, date, time, onDone }: { ctx: PlannerCtx; circles: Circle[]; circleId?: string; existing?: Task; date?: string; time?: string; onDone: () => void }) {
   const { tz, supabase, refresh, toast } = ctx;
   const today = todayISO(tz);
   const tomorrow = DateTime.fromISO(today, { zone: tz }).plus({ days: 1 }).toISODate()!;
-  const exNotify = existing?.notify_at ? DateTime.fromISO(existing.notify_at).setZone(tz) : null;
 
   const [title, setTitle] = useState(existing?.title ?? "");
   const [due, setDue] = useState(existing?.due_date ?? date ?? today);
   const [dueTime, setDueTime] = useState(existing ? hhmm(existing.due_time) : time ?? "");
-  const [notify, setNotify] = useState(!!exNotify);
-  const [notifyDate, setNotifyDate] = useState(exNotify?.toISODate() ?? existing?.due_date ?? date ?? today);
-  const [notifyTime, setNotifyTime] = useState(exNotify?.toFormat("HH:mm") ?? "");
+  // A task with no time counts its reminders from this time on the due day.
+  const NO_TIME = "09:00";
+  // When the task due on `d` is due, as a moment: what its reminders are counted back from.
+  const dueAt = (d: string, t = dueTime) => localToDateTime(d, t || NO_TIME, tz);
+  // Minutes before it is due, one for each reminder; empty for none. The database holds the moments themselves.
+  const [reminders, setReminders] = useState<number[]>(() => {
+    if (!existing) return [];
+    const ref = dueAt(existing.due_date, hhmm(existing.due_time)).toUTC().toISO()!;
+    return tidyReminders([existing.notify_at, ...(existing.extra_notify_at ?? [])].map((n) => (n ? minutesBefore(ref, n) : null)));
+  });
   const [notes, setNotes] = useState(existing?.notes ?? "");
   // Shared with this circle, or "" for private. New ones start in the circle being viewed.
   const [circleId, setCircleId] = useState(existing ? existing.circle_id ?? "" : startCircle ?? "");
@@ -37,13 +45,6 @@ export default function TaskForm({ ctx, circles, circleId: startCircle, existing
   const [error, setError] = useState<string | null>(null);
   const requestId = useRef<string>(crypto.randomUUID());
 
-  function toggleNotify(on: boolean) {
-    setNotify(on);
-    if (on && !notifyTime) {
-      setNotifyDate(due);
-      setNotifyTime(dueTime || "09:00");
-    }
-  }
 
   async function save(e?: React.FormEvent) {
     e?.preventDefault();
@@ -56,25 +57,19 @@ export default function TaskForm({ ctx, circles, circleId: startCircle, existing
     // A repeating task becomes one task per date. The times do not matter here: only the dates are used.
     const dates = (!existing || remake) && rep.freq ? expandRule(toRule(rep, due, "00:00", "00:01", tz)).map((o) => o.date) : [due];
     if (!dates.length) return setError("No date matches that repeat before it ends.");
-    let notifyAt: string | null = null;
-    if (notify) {
-      if (!notifyDate || !notifyTime) return setError("Choose when to be notified, or turn the notification off.");
-      const n = localToDateTime(notifyDate, notifyTime, tz);
-      if (!n.isValid) return setError("That notification time isn’t valid.");
-      if (n < DateTime.now().minus({ minutes: 1 })) return setError("The notification time has already passed.");
-      notifyAt = n.toUTC().toISO();
-    }
+    // The reminders of the task due on `d`. One whose time has already passed is left out.
+    const remindersFor = (d: string) => {
+      const at = reminders.map((m) => dueAt(d).minus({ minutes: m }));
+      const { first, rest } = splitReminders(tidyReminders(at.filter((n) => n.isValid && n > DateTime.now().minus({ minutes: 1 })).map((n) => n.toUTC().toISO())));
+      return { notify_at: first, ...(ctx.manyReminders ? { extra_notify_at: rest } : {}) };
+    };
     setSaving(true);
     setError(null);
     // What every task of a run has in common. circle_id is sent only when the database has the sharing columns.
     const shared = { title: title.trim(), due_time: dueTime || null, notes: notes.trim() || null, ...(ctx.sharing ? { circle_id: circleId || null } : {}), ...(ctx.people ? { assignee_id: circleId ? assignee || null : null } : {}) };
-    const row = { ...shared, due_date: due, notify_at: notifyAt };
-    // One row per date, each with its notification the same distance from its due date as on the first.
-    const shift = notifyAt ? DateTime.fromISO(notifyDate).diff(DateTime.fromISO(due), "days").days : 0;
-    const rows = dates.map((d) => {
-      const n = notifyAt ? localToDateTime(DateTime.fromISO(d).plus({ days: shift }).toISODate()!, notifyTime, tz) : null;
-      return { ...row, due_date: d, notify_at: n && n > DateTime.now() ? n.toUTC().toISO() : null, client_request_id: crypto.randomUUID() };
-    });
+    const row = { ...shared, due_date: due, ...remindersFor(due) };
+    // One row per date.
+    const rows = dates.map((d) => ({ ...shared, due_date: d, ...remindersFor(d), client_request_id: crypto.randomUUID() }));
     let error;
     let done = "Task saved";
     if (remake) {
@@ -152,73 +147,66 @@ export default function TaskForm({ ctx, circles, circleId: startCircle, existing
           </div>
         </fieldset>
       )}
-      <label className="field">
-        <span><Named icon="check">Task</Named></span>
-        <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Call Rahul" autoFocus={!existing} />
-      </label>
-      {/* When it is due: the day, and a time if it has one, kept together. */}
-      <fieldset className="field">
-        <legend><Named icon="clock">Due</Named></legend>
-        <div className="chips">
-          <button type="button" className={`chip ${due === today ? "is-selected" : ""}`} aria-pressed={due === today} onClick={() => setDue(today)}>Today</button>
-          <button type="button" className={`chip ${due === tomorrow ? "is-selected" : ""}`} aria-pressed={due === tomorrow} onClick={() => setDue(tomorrow)}>Tomorrow</button>
-          <input type="date" aria-label="Due date" value={due} onChange={(e) => setDue(e.target.value)} className="input-inline" />
-        </div>
-        <div className="row due-time">
-          <span className="muted">at</span>
-          <input type="time" aria-label="Due time, optional" className="input-inline" value={dueTime} onChange={(e) => setDueTime(e.target.value)} />
-          {dueTime ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDueTime("")}>No time</button> : <span className="muted">any time that day</span>}
-        </div>
-      </fieldset>
-      {ctx.sharing && circles.length > 0 && (
-        <fieldset className="field">
-          <legend><Named icon="people">Share with</Named></legend>
-          <div className="chips chips-xs" style={{ marginTop: 0 }}>
-            <button type="button" className={`chip ${!circleId ? "is-selected" : ""}`} aria-pressed={!circleId} onClick={() => share("")}>Just me</button>
-            {circles.map((c) => (
-              <button type="button" key={c.id} className={`chip ${circleId === c.id ? "is-selected" : ""}`} aria-pressed={circleId === c.id} onClick={() => share(c.id)}>{c.name}</button>
-            ))}
-          </div>
-          {circleId && <span className="hint">Everyone in {circles.find((c) => c.id === circleId)?.name} sees it. Only you can change it.</span>}
-        </fieldset>
-      )}
+      {/* The same stops as an appointment: what, when, who, and the rest. Each mark fills once its stop is answered. */}
+      <div className="steps act-slate">
+        <Step icon="check" name="What" set={!!title.trim()}>
+          <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Call Rahul" aria-label="Task" autoFocus={!existing} />
+        </Step>
 
-      {ctx.people && circleId && members.length > 1 && (
-        <fieldset className="field">
-          <legend><Named icon="people">Who does it</Named></legend>
-          <div className="chips chips-xs" style={{ marginTop: 0 }}>
-            <button type="button" className={`chip ${!assignee ? "is-selected" : ""}`} aria-pressed={!assignee} onClick={() => setAssignee("")}>Anyone</button>
-            {members.map((m) => (
-              <button type="button" key={m.user_id} className={`chip ${assignee === m.user_id ? "is-selected" : ""}`} aria-pressed={assignee === m.user_id} title={m.email} onClick={() => setAssignee(m.user_id)}>
-                <span className={`who act-${m.color}`} aria-hidden>{m.letter}</span> {m.user_id === ctx.userId ? "Me" : m.email.split("@")[0]}
-              </button>
-            ))}
+        {/* When it is due: the day, and a time if it has one, kept together. */}
+        <Step icon="clock" name="When" set={!!due}>
+          <div className="chips">
+            <button type="button" className={`chip ${due === today ? "is-selected" : ""}`} aria-pressed={due === today} onClick={() => setDue(today)}>Today</button>
+            <button type="button" className={`chip ${due === tomorrow ? "is-selected" : ""}`} aria-pressed={due === tomorrow} onClick={() => setDue(tomorrow)}>Tomorrow</button>
+            <input type="date" aria-label="Due date" value={due} onChange={(e) => setDue(e.target.value)} className="input-inline" />
           </div>
-          <span className="hint">{assignee ? "They can mark it done, and so can you." : "Whoever does it can mark it done."}</span>
-        </fieldset>
-      )}
+          <div className="row">
+            <input type="time" aria-label="Due time, optional" className="input-inline" value={dueTime} onChange={(e) => setDueTime(e.target.value)} />
+            {dueTime ? <button type="button" className="btn btn-ghost btn-sm" onClick={() => setDueTime("")}>No time</button> : <span className="muted">Any time</span>}
+          </div>
+        </Step>
 
-      <fieldset className="field">
-        <legend><Named icon="bell">Reminder</Named></legend>
-        <label className="check"><input type="checkbox" checked={notify} onChange={(e) => toggleNotify(e.target.checked)} /> Notify me</label>
-        {notify && (
-          <div className="field-row">
-            <label className="field"><span>Date</span><input type="date" value={notifyDate} onChange={(e) => setNotifyDate(e.target.value)} /></label>
-            <label className="field"><span>Time</span><input type="time" value={notifyTime} onChange={(e) => setNotifyTime(e.target.value)} /></label>
-          </div>
+        {ctx.sharing && circles.length > 0 && (
+          <Step icon="people" name="Who" set={!!circleId}>
+            <div className="chips chips-xs" role="group" aria-label="Share with">
+              <button type="button" className={`chip ${!circleId ? "is-selected" : ""}`} aria-pressed={!circleId} onClick={() => share("")}>Just me</button>
+              {circles.map((c) => (
+                <button type="button" key={c.id} className={`chip ${circleId === c.id ? "is-selected" : ""}`} aria-pressed={circleId === c.id} onClick={() => share(c.id)}>{c.name}</button>
+              ))}
+            </div>
+            {ctx.people && circleId && members.length > 1 && (
+              <div className="chips chips-xs" role="group" aria-label="Who does it">
+                <button type="button" className={`chip ${!assignee ? "is-selected" : ""}`} aria-pressed={!assignee} onClick={() => setAssignee("")}>Anyone</button>
+                {members.map((m) => (
+                  <button type="button" key={m.user_id} className={`chip ${assignee === m.user_id ? "is-selected" : ""}`} aria-pressed={assignee === m.user_id} title={m.email} onClick={() => setAssignee(m.user_id)}>
+                    <span className={`who act-${m.color}`} aria-hidden>{m.letter}</span> {m.user_id === ctx.userId ? "Me" : m.email.split("@")[0]}
+                  </button>
+                ))}
+              </div>
+            )}
+          </Step>
         )}
-        {notify && <p className="hint">It can arrive a minute late. For something like Tatkal booking, set it a few minutes early.</p>}
-      </fieldset>
-      {!existing && <RepeatPicker value={rep} onChange={setRep} date={due} startTime="00:00" endTime="00:01" tz={tz} noun="task" />}
-      {inRun && scope === "series" && (
-        <RepeatPicker
-          value={rep} onChange={setRep} date={due} startTime="00:00" endTime="00:01" tz={tz} noun="task" neverLabel="Keep dates"
-          note={<span className="hint">{rep.freq
-            ? "Saving replaces this task and the later pending ones with this new run. Done and dismissed ones stay."
-            : "The title, time, sharing and notes also go to the later tasks still pending. Their dates and notifications stay as they are."}</span>}
-        />
-      )}
-      <label className="field"><span><Named icon="note">Notes</Named></span><textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></label>
+
+        <Step icon="more" name="More" set={reminders.length > 0 || !!rep.freq || !!notes.trim()}>
+          <div className="stack">
+            <fieldset className="field">
+              <legend><Named icon="bell">Reminder</Named></legend>
+              <ReminderChips value={reminders} onChange={setReminders} many={ctx.manyReminders} zero="When due" />
+              {reminders.length > 0 && !dueTime && <p className="hint">Counted from 9 AM, as it has no time.</p>}
+            </fieldset>
+            {!existing && <RepeatPicker value={rep} onChange={setRep} date={due} startTime="00:00" endTime="00:01" tz={tz} noun="task" />}
+            {inRun && scope === "series" && (
+              <RepeatPicker
+                value={rep} onChange={setRep} date={due} startTime="00:00" endTime="00:01" tz={tz} noun="task" neverLabel="Keep dates"
+                note={<span className="hint">{rep.freq
+                  ? "Saving replaces this task and the later pending ones with this new run. Done and dismissed ones stay."
+                  : "The title, time, sharing and notes also go to the later tasks still pending. Their dates and notifications stay as they are."}</span>}
+              />
+            )}
+            <label className="field"><span><Named icon="note">Notes</Named></span><textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)} /></label>
+          </div>
+        </Step>
+      </div>
 
       {error && <div className="alert alert-error" role="alert">{error}</div>}
 
