@@ -53,6 +53,8 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
   const [emiOwn, setEmiOwn] = useState(!!from?.loan);
   const [saving, setSaving] = useState(false);
   const [confirm, setConfirm] = useState(false);
+  // Closing: the last date being chosen, today to begin with. null while not closing.
+  const [closeOn, setCloseOn] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   // A bank or a type being made on the spot, from its picker.
   const [adding, setAdding] = useState<{ what: "bank" | "type"; name: string; balance: string } | null>(null);
@@ -115,7 +117,7 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
   const nowAt = nowFrom === undefined ? -1 : nowFrom === start ? 0 : steps.findIndex((x) => x.from === nowFrom) + 1;
 
   // Where the loan stands, as the form reads now.
-  const lent = loan && value !== null && start ? { amount: value, start_date: start, amount_steps: steps.flatMap((x) => { const a = parseAmount(x.amount); return x.from > start && a !== null ? [{ from: x.from, amount: a }] : []; }), loan } : null;
+  const lent = loan && value !== null && start ? { amount: value, start_date: start, end_date: end || null, amount_steps: steps.flatMap((x) => { const a = parseAmount(x.amount); return x.from > start && a !== null ? [{ from: x.from, amount: a }] : []; }), loan } : null;
   const lentPct = Number(money.increases.find((i) => i.id === increase)?.percent ?? 0);
   const stands = lent ? loanNow(lent, lentPct, todayIso) : null;
   // What is owed, payment by payment, as a line falling to nothing; `at` is where today sits along it.
@@ -152,9 +154,11 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
   const SIGNS = { "+": "+", "-": "−", "*": "×", "/": "÷", "(": "(", ")": ")" } as const;
   const said = (t: FormulaToken) => (t.t === "item" ? nameOf.get(t.id) ?? "a deleted item" : t.t === "num" ? String(t.v) : t.t === "pct" ? `${t.v}%` : SIGNS[t.v]);
 
-  async function save(e: React.FormEvent) {
-    e.preventDefault();
+  // `closing`: save with this as the last date, and without changes of amount that start after it.
+  async function save(e?: React.FormEvent, closing?: string) {
+    e?.preventDefault();
     if (saving) return;
+    const last = closing ?? end;
     if (!name.trim()) return setError("Give it a name.");
     if (isComputed) {
       if (!tokens.length) return setError("Build the formula: press an item or type a number, then a sign, and so on.");
@@ -173,17 +177,17 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
     if (!start) return setError("Choose a date.");
     if (!bank) return setError(`Choose the bank it ${expense ? "is paid from" : "comes into"}.`);
     if (!type) return setError(`Choose ${expense ? "an expense" : "an income"} type.`);
-    if (freq !== "once" && end && end < start) return setError("The last date is before the first.");
+    if (freq !== "once" && last && last < start) return setError("The last date is before the first.");
     // A one-time item has one amount. Otherwise each change needs a date after the first date, its own day, and a figure.
-    const changes = freq === "once" || isComputed ? [] : steps.map((x) => ({ from: x.from, amount: parseAmount(x.amount) }));
+    const changes = freq === "once" || isComputed ? [] : steps.filter((x) => !closing || x.from <= closing).map((x) => ({ from: x.from, amount: parseAmount(x.amount) }));
     if (changes.some((x) => !x.from || x.amount === null)) return setError("Give each change of amount a date and a figure, or remove it.");
     if (changes.some((x) => x.from <= start)) return setError("A change of amount must start after the first date. To change the first amount, edit it directly.");
-    if (end && changes.some((x) => x.from > end)) return setError("A change of amount starts after the last date.");
+    if (last && changes.some((x) => x.from > last)) return setError("A change of amount starts after the last date.");
     if (new Set(changes.map((x) => x.from)).size !== changes.length) return setError("Two changes of amount start on the same day.");
     changes.sort((a, b) => a.from.localeCompare(b.from));
     setSaving(true);
     const row = {
-      kind, name: name.trim(), amount: value, freq, start_date: start, end_date: freq === "once" ? null : end || null,
+      kind, name: name.trim(), amount: value, freq, start_date: start, end_date: freq === "once" ? null : last || null,
       bank_id: bank || null, type_id: type || null, increase_id: freq === "once" || isComputed ? null : increase || null, person_ids: people, notes: notes.trim() || null,
       // Sent only when the database has the column (0020).
       ...(money.steps ? { amount_steps: changes } : {}),
@@ -196,7 +200,7 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
     setSaving(false);
     if (result.error) return setError(`Couldn’t save: ${result.error.message}`);
     await money.reload();
-    toast("ok", result.data === "pending" ? `Sent to ${scope!.name} for approval` : existing ? `${row.name} updated` : `${row.name} added`);
+    toast("ok", result.data === "pending" ? `Sent to ${scope!.name} for approval` : closing ? `${row.name} closed from ${fmtDay(closing)}` : existing ? `${row.name} updated` : `${row.name} added`);
     onDone();
   }
 
@@ -271,7 +275,7 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
           )}
           <div className="field-row">
             <label className="field"><span><Named icon="clock">{isLoan ? "First EMI date" : freq === "once" ? "Date" : "First date"}</Named></span><input type="date" value={start} onChange={(e) => setStart(e.target.value)} /></label>
-            {freq !== "once" && !isLoan && <label className="field"><span>Last date <span className="muted">(optional)</span></span><input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label>}
+            {freq !== "once" && (!isLoan || end) && <label className="field"><span>Last date <span className="muted">(optional)</span></span><input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label>}
           </div>
         </Step>
 
@@ -447,10 +451,21 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
           </div>
         </div>
       )}
+      {closeOn !== null && (
+        <div className="confirm-box">
+          <p>Close {existing?.name}? It stays in the months up to its last date and stops after it.</p>
+          <label className="field"><span>Last date</span><input type="date" autoFocus value={closeOn} min={start} onChange={(e) => setCloseOn(e.target.value)} /></label>
+          <div className="row">
+            <button type="button" className="btn btn-primary" disabled={saving || !closeOn} onClick={() => save(undefined, closeOn)}>{needsOthers ? "Send for approval" : "Close it"}</button>
+            <button type="button" className="btn btn-ghost" onClick={() => setCloseOn(null)}>Cancel</button>
+          </div>
+        </div>
+      )}
       {canEdit && (
         <div className="form-actions">
           <button className="btn btn-primary" disabled={saving}>{saving ? "Saving…" : needsOthers ? "Send for approval" : existing ? "Save changes" : `Add ${kind}`}</button>
-          {existing && !again && !confirm && <button type="button" className="btn btn-ghost btn-danger" onClick={() => setConfirm(true)}>Delete</button>}
+          {existing && !again && !confirm && closeOn === null && freq !== "once" && <button type="button" className="btn btn-ghost" onClick={() => { setCloseOn(todayIso); setError(null); }}>Close</button>}
+          {existing && !again && !confirm && closeOn === null && <button type="button" className="btn btn-ghost btn-danger" onClick={() => setConfirm(true)}>Delete</button>}
         </div>
       )}
     </form>

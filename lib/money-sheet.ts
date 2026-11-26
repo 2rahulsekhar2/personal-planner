@@ -1,5 +1,5 @@
 import { DateTime } from "luxon";
-import { amountOn, datesInMonth, expected, monthLines, shiftMonth, type Bank, type Increase, type MoneyEntry, type MoneyFreq, type MoneyItem, type MoneyKind, type MoneyType } from "./money";
+import { amountOn, datesInMonth, expected, monthLines, shiftMonth, type AmountStep, type Bank, type Increase, type MoneyEntry, type MoneyFreq, type MoneyItem, type MoneyKind, type MoneyType } from "./money";
 
 /**
  * A budget sheet and Money's own data, each turned into the other.
@@ -116,33 +116,49 @@ export function sheetToMoney(rows: Cell[][], notes: Record<string, string>, nowY
       const start_date = dateIn(first, day);
       const pct = freq === "once" || !increase_id ? 0 : percent;
       // The rule is set from the present: the first planned month, or the last month on record when the row has ended.
-      const ref = vs.find((v) => v.ym >= nowYm) ?? vs[vs.length - 1];
+      const steps: AmountStep[] = [];
       const item: MoneyItem = {
-        id: crypto.randomUUID(), kind, name: name.slice(0, 120), freq, start_date,
-        amount: round2((ref.v * 1e6) / amountOn({ amount: 1e6, start_date }, dateIn(ref.ym, day), pct)),
+        id: crypto.randomUUID(), kind, name: name.slice(0, 120), freq, start_date, amount: vs[0].v,
         end_date: freq === "once" || shiftMonth(last, freq === "yearly" ? 12 : 1) > lastYm ? null : DateTime.fromISO(`${last}-01`).endOf("month").toISODate(),
         bank_id, type_id, increase_id: freq === "once" ? null : increase_id, person_ids: [],
         notes: [...rowNotes, ...cellNotes].filter(Boolean).join("\n") || null,
       };
       data.money_items.push(item);
+      const priced = { amount: item.amount, start_date, amount_steps: steps };
       const byYm = new Map(vs.map((v) => [v.ym, v.v]));
       for (let ym = first; ym <= last; ym = shiftMonth(ym, 1)) {
         const dates = datesInMonth(item, ym);
         if (!dates.length) continue;
         const v = byYm.get(ym);
-        const differs = v !== undefined && Math.abs(v - amountOn(item, dates[0], pct)) > 0.004;
+        // A new figure that the next filled month keeps is a change of amount from that date; otherwise it is this month's alone.
+        const next = vs.find((x) => x.ym > ym);
+        if (v !== undefined && next && Math.abs(v - amountOn(priced, dates[0], pct)) > 0.004 && Math.abs(next.v - v) <= 0.004) steps.push({ from: dates[0], amount: v });
+        const differs = v !== undefined && Math.abs(v - amountOn(priced, dates[0], pct)) > 0.004;
         const entry = { item_id: item.id, month: `${ym}-01`, budget: differs ? v : null, actual: null, paid_at: null, skipped: false };
         if (v === undefined) data.money_entries.push({ ...entry, skipped: true });
         else if (ym < nowYm) data.money_entries.push({ ...entry, actual: v, paid_at: `${ym}-01T00:00:00Z` });
         else if (differs) data.money_entries.push(entry);
       }
+      if (steps.length) item.amount_steps = steps;
     };
     const dated = (vs: typeof vals) => vs.filter((v) => v.note).map((v) => `${v.ym}: ${v.note}`);
-    const span = Math.round(DateTime.fromISO(`${vals[vals.length - 1].ym}-01`).diff(DateTime.fromISO(`${vals[0].ym}-01`), "months").months) + 1;
-    if (vals.length > 1 && vals.every((v) => v.ym.slice(5) === vals[0].ym.slice(5))) add("yearly", vals, dated(vals));
-    // A row filled in less than half its months is a set of separate payments, not a monthly bill with gaps.
-    else if (vals.length * 2 < span || vals.length === 1) for (const v of vals) add("once", [v], v.note ? [v.note] : []);
-    else add("monthly", vals, dated(vals));
+    // One item for the row where it can: three or more figures at most two empty months apart are a monthly bill,
+    // and everything from its first to its last month belongs to it (a gap is a skipped month). The figures outside
+    // that are one yearly item when they all fall in the same month of the year, and separate payments otherwise.
+    const gap = (a: string, b: string) => Math.round(DateTime.fromISO(`${b}-01`).diff(DateTime.fromISO(`${a}-01`), "months").months);
+    const runs: (typeof vals)[] = [];
+    for (const v of vals) {
+      const run = runs[runs.length - 1];
+      if (run && gap(run[run.length - 1].ym, v.ym) <= 3) run.push(v);
+      else runs.push([v]);
+    }
+    const steady = runs.filter((x) => x.length >= 3).flat();
+    const inside = (v: (typeof vals)[number]) => !!steady.length && v.ym >= steady[0].ym && v.ym <= steady[steady.length - 1].ym;
+    const monthly = vals.filter(inside);
+    const loose = vals.filter((v) => !inside(v));
+    if (monthly.length) add("monthly", monthly, dated(monthly));
+    if (loose.length > 1 && loose.every((v) => v.ym.slice(5) === loose[0].ym.slice(5))) add("yearly", loose, dated(loose));
+    else for (const v of loose) add("once", [v], v.note ? [v.note] : []);
   }
   return { data, skipped };
 }

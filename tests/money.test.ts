@@ -223,6 +223,11 @@ describe("a loan", () => {
     expect(rows[4].pay).toBe(1227.15);
   });
 
+  it("stops at the last date when closed early", () => {
+    const rows = loanSchedule(loan({ end_date: "2026-03-10" }));
+    expect(rows.map((r) => r.date)).toEqual(["2026-01-05", "2026-02-05", "2026-03-05"]);
+  });
+
   it("says where it stands on a day", () => {
     const now = loanNow(loan(), 0, "2026-03-10");
     expect(now.balance).toBe(loanSchedule(loan())[2].balance);

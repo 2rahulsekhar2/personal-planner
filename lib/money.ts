@@ -168,7 +168,7 @@ export function loanEmi(loan: Pick<Loan, "principal" | "rate" | "kind" | "months
 }
 
 export interface LoanRow { date: string; pay: number; interest: number; balance: number } // balance: still owed after this payment
-type Lent = Priced & { loan?: Loan | null };
+type Lent = Priced & { loan?: Loan | null; end_date?: string | null };
 const LOAN_MAX = 1200; // months: a loan whose EMI never covers its interest stops being worked out here
 
 /**
@@ -188,7 +188,7 @@ export function loanSchedule(item: Lent, percent = 0, untilYm?: string): LoanRow
     const ym = shiftMonth(item.start_date.slice(0, 7), n);
     if (untilYm && ym > untilYm) break;
     const [date] = datesInMonth({ freq: "monthly", start_date: item.start_date, end_date: null }, ym);
-    if (!date) break;
+    if (!date || (item.end_date && date > item.end_date)) break; // closed: no payments after its last date
     if (fix && !fixed && date > fix.on) { balance = fix.balance; fixed = true; }
     if (fixed && balance <= 0) break; // before the lender's figure applies, payments carry on whatever these sums say
     const interest = round2(((loan.kind === "flat" ? Number(loan.principal) : balance) * Number(loan.rate)) / 1200);
