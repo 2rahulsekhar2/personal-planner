@@ -885,7 +885,7 @@ function Requests({ ctx, money, scope, canEdit, onAgain }: { ctx: PlannerCtx; mo
   );
 }
 
-export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; money: MoneyCtx; circles: Circle[] }) {
+export default function MoneyView({ ctx, money, circles, openItem }: { ctx: PlannerCtx; money: MoneyCtx; circles: Circle[]; openItem?: MoneyItem | null }) {
   const [tab, setTab] = useState<Tab>("month");
   const [panel, setPanel] = useState<PanelState>(null);
   const [formKind, setFormKind] = useState<MoneyKind>("expense"); // what the open item form is set to, for the panel's title
@@ -909,6 +909,12 @@ export default function MoneyView({ ctx, money, circles }: { ctx: PlannerCtx; mo
     return { ...money, banks: here(money.banks), types: here(money.types), increases: here(money.increases), people: here(money.people), items: here(money.items) };
   }, [money, sid]);
   const lines = useMemo(() => monthLines(view.items, view.entries, view.increases, ym), [view, ym]);
+  // An item picked in search: show its budget and open it.
+  useEffect(() => {
+    if (!openItem) return;
+    setScopeId(openItem.circle_id ?? null);
+    setPanel({ kind: "item", id: openItem.id });
+  }, [openItem]);
 
   // Every member of the circle is a family person without being typed in. Whoever opens the budget first adds the missing ones.
   const { supabase } = ctx;
