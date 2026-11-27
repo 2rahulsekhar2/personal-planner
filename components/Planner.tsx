@@ -24,7 +24,9 @@ import { canAdd, isCurrent, isOpen, seatsOf } from "@/lib/circles";
 import { registerServiceWorker } from "@/lib/push-client";
 import MoneyView from "./MoneyView";
 import { useMoney, type Mode } from "./useMoney";
-import { linesDueOn, monthLines, type Line } from "@/lib/money";
+import { linesDueOn, monthLines, type Line, type MoneyItem } from "@/lib/money";
+import SearchDialog, { type Hit } from "./SearchDialog";
+import type { Appointment, Task } from "@/lib/types";
 
 export type View = "week" | "agenda" | "tasks" | "types" | "places" | "settings" | "circles" | "activity";
 
@@ -66,6 +68,10 @@ export default function Planner() {
   const [day, setDay] = useState<string>(() => todayISO(tz));
   const [panel, setPanel] = useState<PanelState>(null);
   const [menu, setMenu] = useState(false);
+  const [searching, setSearching] = useState(false);
+  // What search opened, for when it is outside the loaded week or task list.
+  const found = useRef<{ appt?: Appointment; task?: Task }>({});
+  const [moneyOpen, setMoneyOpen] = useState<MoneyItem | null>(null);
   const circles = useCircles(ctx.supabase);
   const [inviteToken, setInviteToken] = useState<string | null>(null);
   // The two sides of the app. Null until Money has said which side was open last.
@@ -79,6 +85,7 @@ export default function Planner() {
   const switchMode = (m: Mode) => {
     setMode(m);
     setPanel(null);
+    setMoneyOpen(null);
     if (view === "settings") setView(beforeSettings.current);
     // Money that is not on yet is only a visit to its front door: nothing to remember.
     if (m === "time" || money.status === "on") money.rememberMode(m);
@@ -200,18 +207,18 @@ export default function Planner() {
     panelTitle = "New appointment";
     panelBody = <AppointmentForm key={`${panel.date}T${panel.start}`} ctx={ctx} circles={shareable()} initial={{ ...panel, circleId: startIn }} onDone={showSaved} onCancel={closePanel} />;
   } else if (panel?.kind === "edit-appt") {
-    const a = appointments.find((x) => x.id === panel.id);
+    const a = appointments.find((x) => x.id === panel.id) ?? (found.current.appt?.id === panel.id ? found.current.appt : undefined);
     panelTitle = "Edit appointment";
     panelBody = a ? <AppointmentForm ctx={ctx} circles={shareable(a.circle_id)} existing={a} onDone={showSaved} onCancel={() => setPanel({ kind: "appt", id: a.id })} /> : null;
   } else if (panel?.kind === "appt") {
-    const a = appointments.find((x) => x.id === panel.id);
+    const a = appointments.find((x) => x.id === panel.id) ?? (found.current.appt?.id === panel.id ? found.current.appt : undefined);
     panelTitle = "Appointment";
     panelBody = a ? <AppointmentDetails key={a.id} ctx={ctx} circles={live} appt={a} onEdit={() => setPanel({ kind: "edit-appt", id: a.id })} onClose={closePanel} /> : <p className="muted">This appointment is no longer in view.</p>;
   } else if (panel?.kind === "new-task") {
     panelTitle = "New task";
     panelBody = <TaskForm key={`${panel.date}T${panel.time}`} ctx={ctx} circles={shareable()} circleId={startIn} date={panel.date} time={panel.time} onDone={closePanel} />;
   } else if (panel?.kind === "edit-task") {
-    const t = tasks.find((x) => x.id === panel.id);
+    const t = tasks.find((x) => x.id === panel.id) ?? (found.current.task?.id === panel.id ? found.current.task : undefined);
     panelTitle = "Task";
     const theirs = t && t.user_id !== ctx.userId;
     const from = theirs ? live.find((c) => c.id === t.circle_id) : undefined;
@@ -248,6 +255,23 @@ export default function Planner() {
     ctx.toast("ok", l.paid ? `${l.item.name} marked not ${word}` : `${l.item.name} ${word}`);
   };
 
+  // A search result: go to its side and page, and open it.
+  const openHit = (h: Hit) => {
+    setSearching(false);
+    const want: Mode = h.kind === "money" ? "money" : "time";
+    if (mode !== want) switchMode(want);
+    if (view === "settings") setView(beforeSettings.current);
+    if (h.kind === "money") return setMoneyOpen({ ...h.item }); // a fresh object, so picking it again reopens it
+    if (h.kind === "appt" || h.kind === "task") {
+      found.current = h.kind === "appt" ? { appt: h.appt } : { task: h.task };
+      setDay(h.kind === "appt" ? DateTime.fromISO(h.appt.starts_at, { zone: tz }).toISODate()! : h.task.due_date);
+      setView(calView.current);
+      return setPanel(h.kind === "appt" ? { kind: "appt", id: h.appt.id } : { kind: "edit-task", id: h.task.id });
+    }
+    setPanel(null);
+    setView(h.kind === "type" ? "types" : h.kind === "place" ? "places" : "circles");
+  };
+
   // Settings belongs to both sides; everything else on screen follows the mode.
   const showMoney = mode === "money" && view !== "settings";
 
@@ -270,6 +294,9 @@ export default function Planner() {
           Planner
         </button>
         <div className="topbar-right">
+          <button className="icon-btn" aria-label="Search" title="Search" aria-haspopup="dialog" onClick={() => setSearching(true)}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden><circle cx="11" cy="11" r="7" /><path d="M20 20l-3.5-3.5" /></svg>
+          </button>
           <button className={`icon-btn nav-settings ${view === "settings" ? "is-active" : ""}`} aria-label={remindersOff ? `Settings: ${STATUS_LABEL[status!]}` : "Settings"} title={remindersOff ? STATUS_LABEL[status!] : "Settings"} aria-current={view === "settings" ? "page" : undefined} onClick={toggleSettings}>
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
               <circle cx="12" cy="12" r="3" />
@@ -333,7 +360,7 @@ export default function Planner() {
         </div>
       )}
 
-      {showMoney ? <MoneyView ctx={ctx} money={money} circles={live} /> : <main className={`main ${panel ? "has-panel" : ""}`}>
+      {showMoney ? <MoneyView ctx={ctx} money={money} circles={live} openItem={moneyOpen} /> : <main className={`main ${panel ? "has-panel" : ""}`}>
         <section className="content">
           {view === "week" && (
             <div className="week-layout">
@@ -357,6 +384,8 @@ export default function Planner() {
           </Panel>
         )}
       </main>}
+
+      {searching && <SearchDialog ctx={ctx} money={money} circles={live} onPick={openHit} onClose={() => setSearching(false)} />}
 
       <div className="toasts" aria-live="polite">
         {toasts.map((t) => (
