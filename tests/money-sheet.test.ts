@@ -85,6 +85,17 @@ describe("reading a budget sheet", () => {
     for (const ym of MONTHS) expect(figures(data, ym)["Hotstar - 16th"], ym).toBe(rows[4][5 + MONTHS.indexOf(ym)]);
   });
 
+  it("makes a row due in the same months each year one yearly item for each of those months", () => {
+    const rows: Cell[][] = [SHEET[0], SHEET[1], ["OUTFLOW"],
+      // Due every December and March, and once in an odd month.
+      line("Amazon/Hotstar - 16th", "GE", "HDFC Bank", null, null, (ym) => (ym.endsWith("-12") || ym.endsWith("-03") ? 1500 : ym === "2027-08" ? 99 : null)),
+    ];
+    const { data } = sheetToMoney(rows, {}, NOW);
+    const of = data.money_items.filter((i) => i.name === "Amazon/Hotstar - 16th");
+    expect(of.map((i) => [i.freq, i.start_date]).sort()).toEqual([["once", "2027-08-16"], ["yearly", "2026-12-16"], ["yearly", "2027-03-16"]]);
+    for (const ym of MONTHS) expect(figures(data, ym)["Amazon/Hotstar - 16th"] ?? null, ym).toBe(rows[3][5 + MONTHS.indexOf(ym)]);
+  });
+
   it("refuses a sheet that is not a budget", () => {
     expect(() => sheetToMoney([["Name", "Phone"]], {}, NOW)).toThrow(/budget sheet/);
   });

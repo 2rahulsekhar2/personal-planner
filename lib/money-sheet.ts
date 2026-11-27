@@ -144,7 +144,7 @@ export function sheetToMoney(rows: Cell[][], notes: Record<string, string>, nowY
     const dated = (vs: typeof vals) => vs.filter((v) => v.note).map((v) => `${v.ym}: ${v.note}`);
     // One item for the row where it can: three or more figures at most two empty months apart are a monthly bill,
     // and everything from its first to its last month belongs to it (a gap is a skipped month). The figures outside
-    // that are one yearly item when they all fall in the same month of the year, and separate payments otherwise.
+    // are yearly items, one for each month of the year that repeats, and separate payments otherwise.
     const gap = (a: string, b: string) => Math.round(DateTime.fromISO(`${b}-01`).diff(DateTime.fromISO(`${a}-01`), "months").months);
     const runs: (typeof vals)[] = [];
     for (const v of vals) {
@@ -157,8 +157,14 @@ export function sheetToMoney(rows: Cell[][], notes: Record<string, string>, nowY
     const monthly = vals.filter(inside);
     const loose = vals.filter((v) => !inside(v));
     if (monthly.length) add("monthly", monthly, dated(monthly));
-    if (loose.length > 1 && loose.every((v) => v.ym.slice(5) === loose[0].ym.slice(5))) add("yearly", loose, dated(loose));
-    else for (const v of loose) add("once", [v], v.note ? [v.note] : []);
+    // Each month of the year that comes back is a yearly item: a row due every March and December is two of them, not
+    // one payment a figure. A month seen once is a payment of its own.
+    const byMonth = new Map<string, typeof vals>();
+    for (const v of loose) byMonth.set(v.ym.slice(5), [...(byMonth.get(v.ym.slice(5)) ?? []), v]);
+    for (const vs of byMonth.values()) {
+      if (vs.length > 1) add("yearly", vs, dated(vs));
+      else add("once", vs, vs[0].note ? [vs[0].note] : []);
+    }
   }
   return { data, skipped };
 }
