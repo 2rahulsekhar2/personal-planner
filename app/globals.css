@@ -420,6 +420,9 @@ button.avatar:hover { background: var(--accent-hover); }
 .day-pick-pop .mini-day { padding: 8px 0; border-radius: 8px; color: inherit; }
 .day-pick-pop .mini-day.is-out { color: var(--muted); }
 .day-pick-pop .mini-day.is-today { color: var(--accent-ink); }
+.month-grid { grid-template-columns: repeat(4, 1fr); gap: 4px; }
+.day-pick-pop .month-grid .mini-day { padding: 10px 0; }
+.range-pick .heading-caret { align-self: center; margin-left: 2px; }
 .agenda-heading .muted { font-size: 15px; font-weight: 400; margin-left: 6px; }
 .agenda-list { display: flex; flex-direction: column; gap: 8px; }
 .agenda-appt {
