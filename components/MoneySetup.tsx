@@ -26,8 +26,8 @@ const PLUS = "M12 5v14M5 12h14";
  * `scope`: the circle whose list this is, or null for a private one. `canEdit` false shows it read-only (a viewer).
  * `mayEdit` narrows editing to some rows (a bank: only the person who added it). `formAction` adds a button to the edit form.
  */
-function ListEditor({ ctx, money, scope, canEdit, title, noun, table, rows, fields, look, token, label, mayEdit, formAction }: {
-  ctx: PlannerCtx; money: MoneyCtx; scope: Circle | null; canEdit: boolean; title: string; noun: string; table: string; rows: Row[]; fields: Field[];
+function ListEditor({ ctx, money, scope, canEdit, title, aside, noun, table, rows, fields, look, token, label, mayEdit, formAction }: {
+  ctx: PlannerCtx; money: MoneyCtx; scope: Circle | null; canEdit: boolean; title: string; aside?: React.ReactNode; noun: string; table: string; rows: Row[]; fields: Field[];
   look: "tiles" | "faces" | "chips"; token: (row: Row) => React.ReactNode; label: (row: Row) => string;
   mayEdit?: (row: Row) => boolean; formAction?: (row: Row, close: () => void) => React.ReactNode;
 }) {
@@ -79,6 +79,7 @@ function ListEditor({ ctx, money, scope, canEdit, title, noun, table, rows, fiel
     <section className="kit">
       <div className="kit-head">
         <h2>{title}</h2>
+        {aside}
         {archived > 0 && <button className="link" onClick={() => { setShowArchived(!showArchived); close(); }}>{showArchived ? "Back to active" : `${archived} archived`}</button>}
       </div>
       <ul className={`kit-row kit-${look}`}>
@@ -290,7 +291,8 @@ export default function MoneySetup({ ctx, money, scope, canEdit, circles }: { ct
   return (
     <div className="kit-board">
       {!scope && <FamilyPlans ctx={ctx} money={money} circles={circles} />}
-      <ListEditor {...shared} title="Banks" noun="bank" table="money_banks" rows={money.banks as unknown as Row[]} look="tiles"
+      <ListEditor {...shared} title="Banks" noun="bank"
+        aside={money.banks.some((b) => !b.archived_at) && <span className="kit-total">Total <strong>{inr(money.banks.reduce((sum, b) => sum + (b.archived_at ? 0 : Number(b.balance)), 0))}</strong></span>} table="money_banks" rows={money.banks as unknown as Row[]} look="tiles"
         fields={[{ key: "name", label: "Name", kind: "text", placeholder: "HDFC Bank" }, { key: "balance", label: "Current balance", kind: "amount", placeholder: "₹" }]}
         label={(r) => `${r.name}, ${inr(Number(r.balance))}`} mayEdit={(r) => r.user_id === ctx.userId}
         token={(r) => (
