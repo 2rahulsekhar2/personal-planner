@@ -94,22 +94,11 @@ function MoveMenu({ x, y, onMove, onClose }: { x: number; y: number; onMove: () 
   );
 }
 
-/** The one day every line falls on, when they all share it: then the day is said once, not on every row. */
-const sharedDay = (lines: Line[]) => (lines.length > 1 && lines.every((l) => l.dates.length === 1 && l.dates[0] === lines[0].dates[0]) ? lines[0].dates[0] : null);
-
 /**
- * A month's income or expense lines. The box marks a line paid or received; the row opens that month's figures.
- * `flat`: inside another card (the bills of a bank), so drawn without a card of its own.
- * `groupBy`: gather the lines under their type, each group with its own total and progress. A group that is all
- * settled starts folded to its heading. With fewer than two types in the list there is nothing to group.
+ * Picking a line up and putting it elsewhere in its list: held and dragged on a touch screen; right-click, Move, on a computer.
+ * Each movable row carries `grip(id, ids)`, where `ids` is its list in the order drawn; the row picked up shows `keys`.
  */
-function Lines({ lines, meta, onToggle, onOpen, empty, locked, flat, groupBy, onReorder }: {
-  lines: Line[]; meta?: (l: Line) => React.ReactNode; onToggle: (l: Line) => void; onOpen: (l: Line) => void; empty: string; locked?: boolean; flat?: boolean;
-  groupBy?: (typeId: string | null) => { name: string; tone: string | null };
-  // Given, the lines can be moved within their list: held and dragged on a touch screen; right-click, Move, on a computer.
-  onReorder?: (ids: string[]) => Promise<void> | void;
-}) {
-  const [flipped, setFlipped] = useState<string[]>([]); // groups whose fold was changed by hand
+function useMove(onReorder?: (ids: string[]) => Promise<void> | void) {
   // The line picked up, its list's order as it stands, and as it was when picked up.
   const [move, setMove] = useState<{ id: string; ids: string[]; from: string[] } | null>(null);
   const [menu, setMenu] = useState<{ id: string; ids: string[]; x: number; y: number } | null>(null);
@@ -132,10 +121,8 @@ function Lines({ lines, meta, onToggle, onOpen, empty, locked, flat, groupBy, on
     const onMove = (e: PointerEvent) => {
       if (!drag.current) return;
       // Its new place: after every other line of its list whose middle the pointer has passed.
-      const list = document.querySelector(`li[data-id="${move.id}"]`)?.parentElement;
-      if (!list) return;
-      const others = [...list.querySelectorAll<HTMLElement>(":scope > li[data-id]")].filter((li) => li.dataset.id !== move.id);
-      const to = others.filter((li) => { const r = li.getBoundingClientRect(); return e.clientY > r.top + r.height / 2; }).length;
+      const others = [...document.querySelectorAll<HTMLElement>("[data-id]")].filter((el) => el.dataset.id !== move.id && move.ids.includes(el.dataset.id!));
+      const to = others.filter((el) => { const r = el.getBoundingClientRect(); return e.clientY > r.top + r.height / 2; }).length;
       const ids = movedTo(move.ids, move.id, to);
       if (ids.join() !== move.ids.join()) setMove({ ...move, ids });
     };
@@ -162,24 +149,53 @@ function Lines({ lines, meta, onToggle, onOpen, empty, locked, flat, groupBy, on
   }, [move, onReorder]);
 
   const letGo = () => { if (press.current) { clearTimeout(press.current.timer); press.current = null; } };
-  // A list's lines as drawn: by hand while one of them is being moved, else in their usual order.
-  const ordered = (own: Line[]) => (move && own.some((l) => l.item.id === move.id) ? move.ids.flatMap((id) => own.filter((l) => l.item.id === id)) : inOrder(own));
   // What makes a row movable. `ids`: its list, in the order drawn.
-  const grip = (l: Line, ids: string[]): React.LiHTMLAttributes<HTMLLIElement> & { "data-id"?: string } => (!onReorder || ids.length < 2 ? {} : {
-    "data-id": l.item.id,
+  const grip = (id: string, ids: string[]): React.HTMLAttributes<HTMLElement> & { "data-id"?: string } => (!onReorder || ids.length < 2 ? {} : {
+    "data-id": id,
     onPointerDown: (e) => {
-      if (move?.id === l.item.id) { if (!(e.target as HTMLElement).closest(".move-keys")) drag.current = true; return; }
+      if (move?.id === id) { if (!(e.target as HTMLElement).closest(".move-keys")) drag.current = true; return; }
       if (move || e.pointerType === "mouse") return;
       const { clientX: x, clientY: y } = e;
-      press.current = { x, y, timer: window.setTimeout(() => { press.current = null; drag.current = true; navigator.vibrate?.(12); setMove({ id: l.item.id, ids, from: ids }); }, 450) };
+      press.current = { x, y, timer: window.setTimeout(() => { press.current = null; drag.current = true; navigator.vibrate?.(12); setMove({ id, ids, from: ids }); }, 450) };
     },
     onPointerMove: (e) => { if (press.current && Math.hypot(e.clientX - press.current.x, e.clientY - press.current.y) > 8) letGo(); },
     onPointerUp: letGo,
     onPointerCancel: letGo,
-    onContextMenu: (e) => { e.preventDefault(); if (!move && !press.current && !drag.current) setMenu({ id: l.item.id, ids, x: e.clientX, y: e.clientY }); },
+    onContextMenu: (e) => { e.preventDefault(); if (!move && !press.current && !drag.current) setMenu({ id, ids, x: e.clientX, y: e.clientY }); },
     onClickCapture: (e) => { if ((move || swallow.current) && !(e.target as HTMLElement).closest(".move-keys")) { e.preventDefault(); e.stopPropagation(); } },
   });
   const moveMenu = menu && <MoveMenu x={menu.x} y={menu.y} onClose={closeMenu} onMove={() => { setMove({ id: menu.id, ids: menu.ids, from: menu.ids }); setMenu(null); }} />;
+  // Picked up with the mouse: step it up or down, then set it down. A finger drags it instead.
+  const keys = (id: string, ids: string[]) => move?.id === id && (
+    <span className="move-keys">
+      <button type="button" className="icon-btn" aria-label="Move up" title="Move up" disabled={ids[0] === id} onClick={() => setMove({ ...move, ids: movedTo(move.ids, move.id, move.ids.indexOf(move.id) - 1) })}>↑</button>
+      <button type="button" className="icon-btn" aria-label="Move down" title="Move down" disabled={ids[ids.length - 1] === id} onClick={() => setMove({ ...move, ids: movedTo(move.ids, move.id, move.ids.indexOf(move.id) + 1) })}>↓</button>
+      <button type="button" className="icon-btn" aria-label="Done moving" title="Done" onClick={async () => { if (move.ids.join() !== move.from.join()) await onReorder?.(move.ids); setMove(null); }}>✓</button>
+    </span>
+  );
+  return { move, setMove, grip, keys, moveMenu };
+}
+
+/** The one day every line falls on, when they all share it: then the day is said once, not on every row. */
+const sharedDay = (lines: Line[]) => (lines.length > 1 && lines.every((l) => l.dates.length === 1 && l.dates[0] === lines[0].dates[0]) ? lines[0].dates[0] : null);
+
+/**
+ * A month's income or expense lines. The box marks a line paid or received; the row opens that month's figures.
+ * `flat`: inside another card (the bills of a bank), so drawn without a card of its own.
+ * `groupBy`: gather the lines under their type, each group with its own total and progress. A group that is all
+ * settled starts folded to its heading. With fewer than two types in the list there is nothing to group.
+ */
+function Lines({ lines, meta, onToggle, onOpen, empty, locked, flat, groupBy, onReorder }: {
+  lines: Line[]; meta?: (l: Line) => React.ReactNode; onToggle: (l: Line) => void; onOpen: (l: Line) => void; empty: string; locked?: boolean; flat?: boolean;
+  groupBy?: (typeId: string | null) => { name: string; tone: string | null };
+  // Given, the lines can be moved within their list: held and dragged on a touch screen; right-click, Move, on a computer.
+  onReorder?: (ids: string[]) => Promise<void> | void;
+}) {
+  const [flipped, setFlipped] = useState<string[]>([]); // groups whose fold was changed by hand
+  const { move, grip: gripOf, keys, moveMenu } = useMove(onReorder);
+  // A list's lines as drawn: by hand while one of them is being moved, else in their usual order.
+  const ordered = (own: Line[]) => (move && own.some((l) => l.item.id === move.id) ? move.ids.flatMap((id) => own.filter((l) => l.item.id === id)) : inOrder(own));
+  const grip = (l: Line, ids: string[]) => gripOf(l.item.id, ids);
   if (!lines.length) return <p className="empty card">{empty}</p>;
   const verb = lines[0].item.kind === "expense" ? "paid" : "received";
   // `noLeaf`: every line around this one falls on the same day, which is said once above them instead.
@@ -205,14 +221,7 @@ function Lines({ lines, meta, onToggle, onOpen, empty, locked, flat, groupBy, on
         {/* Under a rupee apart is rounding from an import, not a change worth pointing at. */}
         {l.actual === null && Math.abs(l.budget - l.rule) >= 1 && <span>usually {inr(l.rule)}</span>}
       </span>
-      {/* Picked up with the mouse: step it up or down, then set it down. A finger drags it instead. */}
-      {move?.id === l.item.id && (
-        <span className="move-keys">
-          <button type="button" className="icon-btn" aria-label="Move up" title="Move up" disabled={ids[0] === l.item.id} onClick={() => setMove({ ...move, ids: movedTo(move.ids, move.id, move.ids.indexOf(move.id) - 1) })}>↑</button>
-          <button type="button" className="icon-btn" aria-label="Move down" title="Move down" disabled={ids[ids.length - 1] === l.item.id} onClick={() => setMove({ ...move, ids: movedTo(move.ids, move.id, move.ids.indexOf(move.id) + 1) })}>↓</button>
-          <button type="button" className="icon-btn" aria-label="Done moving" title="Done" onClick={async () => { if (move.ids.join() !== move.from.join()) await onReorder?.(move.ids); setMove(null); }}>✓</button>
-        </span>
-      )}
+      {keys(l.item.id, ids)}
     </li>
     {/* A computed item's parts, under it: each opens its own month, where what it really came to is recorded. */}
     {withParts(l.parts ?? []).map((p) => (
@@ -442,10 +451,13 @@ const amt = (n: number) => (n ? plain.format(n) : "");
  * Twelve months side by side, a row an item: a filled cell is a month the item falls due, so a row's pattern is
  * how often it comes. A filled cell opens that month of the item; an empty one, or a month's name, adds an item there.
  */
-function Year({ view, from, nowYm, canEdit, groupBy, onLine, onItem, onAdd }: {
+function Year({ view, from, nowYm, canEdit, groupBy, onLine, onItem, onAdd, onReorder }: {
   view: MoneyCtx; from: string; nowYm: string; canEdit: boolean; groupBy: (typeId: string | null) => { name: string; tone: string | null };
   onLine: (id: string, ym: string) => void; onItem: (id: string) => void; onAdd: (ym: string, kind?: MoneyKind) => void;
+  onReorder?: (ids: string[]) => Promise<void> | void;
 }) {
+  // A row is moved within its type the way a month's line is: right-click, Move; or held and dragged on a touch screen.
+  const { move, grip, keys, moveMenu } = useMove(onReorder);
   const { months, rows } = useMemo(() => yearRows(view.items, view.entries, view.increases, from), [view.items, view.entries, view.increases, from]);
   // The types folded shut, each down to its row of totals.
   const [shut, setShut] = useState<Set<string>>(new Set());
@@ -459,7 +471,12 @@ function Year({ view, from, nowYm, canEdit, groupBy, onLine, onItem, onAdd }: {
     const own = rows.filter((r) => r.item.kind === kind);
     const word = kind === "expense" ? "paid" : "received";
     const groups = [...new Set(own.map((r) => r.item.type_id))]
-      .map((id) => ({ id, ...groupBy(id), rows: own.filter((r) => r.item.type_id === id) }))
+      .map((id) => {
+        const mine = own.filter((r) => r.item.type_id === id);
+        // In the place each was given by hand, ahead of the rest; while one is picked up, as it is being moved.
+        const shown = move && mine.some((r) => r.item.id === move.id) ? move.ids.flatMap((m) => mine.filter((r) => r.item.id === m)) : byPlace(mine);
+        return { id, ...groupBy(id), rows: shown };
+      })
       .sort((a, b) => b.rows.reduce((s, r) => s + r.total, 0) - a.rows.reduce((s, r) => s + r.total, 0));
     return (
       <tbody className={kind === "income" ? "yr-in" : "yr-out"}>
@@ -480,9 +497,13 @@ function Year({ view, from, nowYm, canEdit, groupBy, onLine, onItem, onAdd }: {
                 {figures(sums(g.rows))}
               </tr>
             )}
-            {!(groups.length > 1 && shut.has(`${kind}:${g.id}`)) && g.rows.map((r) => (
-              <tr key={r.item.id}>
-                <th scope="row"><button className="yr-name" title={r.item.name} onClick={() => onItem(r.item.id)}>{r.item.name}</button></th>
+            {!(groups.length > 1 && shut.has(`${kind}:${g.id}`)) && g.rows.map((r, _, all) => (
+              <tr key={r.item.id} className={move?.id === r.item.id ? "is-moving" : ""} {...grip(r.item.id, all.map((x) => x.item.id))}>
+                <th scope="row">
+                  {move?.id === r.item.id
+                    ? <span className="yr-moving"><span className="yr-name">{r.item.name}</span>{keys(r.item.id, all.map((x) => x.item.id))}</span>
+                    : <button className="yr-name" title={r.item.name} onClick={() => onItem(r.item.id)}>{r.item.name}</button>}
+                </th>
                 {r.cells.map((l, n) => {
                   const ym = months[n];
                   const late = !!l && !l.paid && !l.skipped && ym < nowYm;
@@ -536,6 +557,7 @@ function Year({ view, from, nowYm, canEdit, groupBy, onLine, onItem, onAdd }: {
           </tr>
         </tfoot>
       </table>
+      {moveMenu}
     </div>
   );
 }
@@ -638,6 +660,7 @@ const perMonth = (amount: number, freq: MoneyFreq) => (freq === "daily" ? (amoun
 function Items({ view, today, canEdit, onOpen, onNew }: { view: MoneyCtx; today: string; canEdit: boolean; onOpen: (id: string) => void; onNew: () => void }) {
   const [q, setQ] = useState("");
   const [filter, setFilter] = useState<ItemFilter>("all");
+  const [unfolded, setUnfolded] = useState<Set<string>>(new Set()); // groups of one-time items opened to their dates
   type Item = MoneyCtx["items"][number];
   const pct = new Map(view.increases.map((i) => [i.id, Number(i.percent)]));
   const bankAt = new Map(view.banks.map((b, n) => [b.id, { name: b.name, tone: TONES[n % TONES.length] }]));
@@ -678,7 +701,8 @@ function Items({ view, today, canEdit, onOpen, onNew }: { view: MoneyCtx; today:
   const reach = Math.max(flows.income.total, flows.expense.total, 1);
   const top = { income: Math.max(...view.items.filter((i) => i.kind === "income").map((i) => facts.get(i.id)!.weight), 1), expense: Math.max(...view.items.filter((i) => i.kind === "expense").map((i) => facts.get(i.id)!.weight), 1) };
 
-  const row = ({ i, depth }: { i: Item; depth: number }) => {
+  // `dated`: a one-time item under its group, named by its date, since the group already says the name.
+  const row = ({ i, depth }: { i: Item; depth: number }, dated = false) => {
     const f = facts.get(i.id)!;
     const bank = i.bank_id ? bankAt.get(i.bank_id) : undefined;
     const type = i.type_id ? typeAt.get(i.type_id) : undefined;
@@ -702,7 +726,7 @@ function Items({ view, today, canEdit, onOpen, onNew }: { view: MoneyCtx; today:
             ? <span className={`kit-mono act-${type.tone}`} aria-hidden>{type.name.trim()[0]?.toUpperCase()}</span>
             : <span className="kit-mono is-none items-fix" aria-hidden>?</span>}
           <span className="grow items-what">
-            <span className="items-name">{i.name}</span>
+            <span className="items-name">{dated ? DateTime.fromISO(i.start_date).toFormat("d LLL yyyy") : i.name}</span>
             {/* How much of an average month this item is, against the largest of its kind. */}
             <span className={`items-bar ${type ? `act-${type.tone}` : "is-none"} ${i.kind === "income" ? "is-in" : ""}`} aria-hidden><span style={{ width: `${f.weight > 0 ? Math.max(3, (f.weight / top[i.kind]) * 100) : 0}%` }} /></span>
           </span>
@@ -723,6 +747,52 @@ function Items({ view, today, canEdit, onOpen, onNew }: { view: MoneyCtx; today:
       </li>
     );
   };
+  // One-time items of one name (an import makes one for each figure of an irregular row) show as one row with
+  // their count and total, where the first of them would be; opened, it lists them by date.
+  const onceKey = (i: Item) => (i.freq === "once" && !i.formula ? `${i.kind}:${i.name.trim().toLowerCase()}` : null);
+  const gathered = (list: { i: Item; depth: number }[]) => {
+    const groups = new Map<string, Item[]>();
+    for (const { i, depth } of list) { const k = !depth && onceKey(i); if (k) groups.set(k, [...(groups.get(k) ?? []), i]); }
+    return list.flatMap((e) => {
+      const k = !e.depth && onceKey(e.i);
+      const all = k ? groups.get(k)! : [];
+      if (!k || all.length < 2) return [row(e)];
+      if (all[0] !== e.i) return [];
+      const dated = [...all].sort((a, b) => a.start_date.localeCompare(b.start_date));
+      return [groupRow(k, dated), ...(unfolded.has(k) ? dated.map((i) => row({ i, depth: 1 }, true)) : [])];
+    });
+  };
+  const groupRow = (k: string, all: Item[]) => {
+    const first = all[0];
+    const same = <T,>(f: (i: Item) => T) => (all.every((i) => f(i) === f(first)) ? f(first) : null);
+    const type = same((i) => i.type_id) ? typeAt.get(first.type_id!) : undefined;
+    const bank = same((i) => i.bank_id) ? bankAt.get(first.bank_id!) : undefined;
+    const total = all.reduce((n, i) => n + facts.get(i.id)!.amount, 0);
+    const weight = all.reduce((n, i) => n + facts.get(i.id)!.weight, 0);
+    const open = unfolded.has(k);
+    const words = `${first.name}: ${all.length} one-time ${first.kind === "income" ? "incomes" : "expenses"}, ${inr(total)} in all, from ${DateTime.fromISO(all[0].start_date).toFormat("d LLL yyyy")} to ${DateTime.fromISO(all[all.length - 1].start_date).toFormat("d LLL yyyy")}`;
+    return (
+      <li key={k}>
+        <button className="items-row" aria-expanded={open} aria-label={words} title={words} onClick={() => setUnfolded((was) => { const next = new Set(was); if (!next.delete(k)) next.add(k); return next; })}>
+          {type
+            ? <span className={`kit-mono act-${type.tone}`} aria-hidden>{type.name.trim()[0]?.toUpperCase()}</span>
+            : <span className="kit-mono is-none items-fix" aria-hidden>?</span>}
+          <span className="grow items-what">
+            <span className="items-name">{first.name}</span>
+            <span className={`items-bar ${type ? `act-${type.tone}` : "is-none"} ${first.kind === "income" ? "is-in" : ""}`} aria-hidden><span style={{ width: `${weight > 0 ? Math.max(3, (weight / top[first.kind]) * 100) : 0}%` }} /></span>
+          </span>
+          <span className="money-amt">
+            <strong>{inr(total)}</strong>
+            <span className="items-marks" aria-hidden>
+              <span className="items-mark">×{all.length}</span>
+              {bank ? <span className={`kit-mono is-mini act-${bank.tone}`}>{bank.name.trim()[0]?.toUpperCase()}</span> : <span className="kit-mono is-mini is-none items-fix">?</span>}
+              <svg className="items-fold" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" strokeLinejoin="round"><path d={open ? "M6 15l6-6 6 6" : "M6 9l6 6 6-6"} /></svg>
+            </span>
+          </span>
+        </button>
+      </li>
+    );
+  };
   // Closed: past its last date, or a loan paid off. These go in a section of their own, latest to end first.
   const closed = (i: Item) => facts.get(i.id)!.ended || facts.get(i.id)!.owes === 0;
   const lastDay = (i: Item) => i.end_date ?? "";
@@ -734,7 +804,7 @@ function Items({ view, today, canEdit, onOpen, onNew }: { view: MoneyCtx; today:
     return (
       <section key={kind} className="items-kind">
         <h2><span className={`kit-way ${kind === "income" ? "is-in" : kind === "expense" ? "is-out" : ""}`} aria-hidden><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={kind === "income" ? "M12 5v14M6 13l6 6 6-6" : kind === "expense" ? "M12 19V5M6 11l6-6 6 6" : "M5 12h14"} /></svg></span>{kind === "income" ? "Income" : kind === "expense" ? "Expenses" : "Closed"}</h2>
-        <ul className="card list items-list">{list.map(row)}</ul>
+        <ul className="card list items-list">{gathered(list)}</ul>
       </section>
     );
   };
@@ -1109,7 +1179,8 @@ export default function MoneyView({ ctx, money, circles, openItem }: { ctx: Plan
 
   return (
     <>
-      {canEdit && (
+      {/* The year adds from its own cells and month names, so the round button would only cover the table. */}
+      {canEdit && tab !== "year" && (
         <button className="btn btn-primary btn-add" onClick={() => setPanel({ kind: "item" })}>
           <svg className="add-plus" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden><path d="M12 5v14M5 12h14" /></svg>
           <span className="add-text">Add income or expense</span>
@@ -1170,7 +1241,7 @@ export default function MoneyView({ ctx, money, circles, openItem }: { ctx: Plan
 
             {tab === "year" && (
               <>
-                <Year view={view} from={yearFrom} nowYm={nowYm} canEdit={canEdit} groupBy={groupBy}
+                <Year view={view} from={yearFrom} nowYm={nowYm} canEdit={canEdit} groupBy={groupBy} onReorder={onReorder}
                   onLine={(id, m) => setPanel({ kind: "line", id, ym: m })} onItem={(id) => setPanel({ kind: "item", id })}
                   onAdd={(m, kind) => setPanel({ kind: "item", as: kind, date: m === nowYm ? todayISO(ctx.tz) : `${m}-01` })} />
                 <p className="ins-key yr-key"><span><i className="is-paid" />done</span><span><i className="is-plan" />still to come</span><span><i className="is-spill" />overdue</span></p>

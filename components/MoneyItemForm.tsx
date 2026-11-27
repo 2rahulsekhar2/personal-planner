@@ -30,6 +30,8 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
   const [steps, setSteps] = useState<{ from: string; amount: string }[]>(() => [...(from?.amount_steps ?? [])].sort((a, b) => a.from.localeCompare(b.from)).map((x) => ({ from: x.from, amount: String(x.amount) })));
   const [freq, setFreq] = useState<MoneyFreq>(from?.freq ?? "monthly");
   const [start, setStart] = useState(from?.start_date ?? date ?? todayISO(ctx.tz));
+  // A one-time item's further dates: each saved as a one-time item of its own, alike but for the date.
+  const [moreDates, setMoreDates] = useState<string[]>([]);
   const [end, setEnd] = useState(from?.end_date ?? "");
   const [bank, setBank] = useState(from?.bank_id ?? "");
   const [type, setType] = useState(from?.type_id ?? "");
@@ -178,6 +180,9 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
     if (!bank) return setError(`Choose the bank it ${expense ? "is paid from" : "comes into"}.`);
     if (!type) return setError(`Choose ${expense ? "an expense" : "an income"} type.`);
     if (freq !== "once" && last && last < start) return setError("The last date is before the first.");
+    const extra = freq === "once" && !isLoan ? moreDates : [];
+    if (extra.some((d) => !d)) return setError("Give each added date a day, or remove it.");
+    if (new Set([start, ...extra]).size !== extra.length + 1) return setError("The same date is there twice.");
     // A one-time item has one amount. Otherwise each change needs a date after the first date, its own day, and a figure.
     const changes = freq === "once" || isComputed ? [] : steps.filter((x) => !closing || x.from <= closing).map((x) => ({ from: x.from, amount: parseAmount(x.amount) }));
     if (changes.some((x) => !x.from || x.amount === null)) return setError("Give each change of amount a date and a figure, or remove it.");
@@ -197,10 +202,18 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
       ...(money.formulas ? { formula: isComputed ? tokens : null } : {}),
     };
     const result = scope ? await ask(existing ? "change" : "add", row) : existing ? await supabase.from("money_items").update(row).eq("id", existing.id) : await supabase.from("money_items").insert(row);
+    if (result.error) { setSaving(false); return setError(`Couldn’t save: ${result.error.message}`); }
+    // The further dates are new items, whether this one was new or not.
+    if (extra.length) {
+      const rows = extra.map((d) => ({ ...row, start_date: d }));
+      const more = scope
+        ? (await Promise.all(rows.map((r) => supabase.rpc("money_propose", { p_circle: scope.id, p_action: "add", p_item: null, p_payload: r })))).find((r) => r.error) ?? { error: null }
+        : await supabase.from("money_items").insert(rows);
+      if (more.error) { setSaving(false); await money.reload(); return setError(`Saved the first date, but not the others: ${more.error.message}`); }
+    }
     setSaving(false);
-    if (result.error) return setError(`Couldn’t save: ${result.error.message}`);
     await money.reload();
-    toast("ok", result.data === "pending" ? `Sent to ${scope!.name} for approval` : closing ? `${row.name} closed from ${fmtDay(closing)}` : existing ? `${row.name} updated` : `${row.name} added`);
+    toast("ok", result.data === "pending" ? `Sent to ${scope!.name} for approval` : closing ? `${row.name} closed from ${fmtDay(closing)}` : extra.length ? `${row.name} ${existing ? "updated, and added" : "added"} on ${extra.length + (existing ? 0 : 1)} ${extra.length + (existing ? 0 : 1) === 1 ? "more date" : "dates"}` : existing ? `${row.name} updated` : `${row.name} added`);
     onDone();
   }
 
@@ -277,6 +290,17 @@ export function MoneyItemForm({ ctx, money, scope, canEdit, existing, again, kin
             <label className="field"><span><Named icon="clock">{isLoan ? "First EMI date" : freq === "once" ? "Date" : "First date"}</Named></span><input type="date" value={start} onChange={(e) => setStart(e.target.value)} /></label>
             {freq !== "once" && (!isLoan || end) && <label className="field"><span>Last date <span className="muted">(optional)</span></span><input type="date" value={end} min={start} onChange={(e) => setEnd(e.target.value)} /></label>}
           </div>
+          {freq === "once" && !isLoan && (
+            <>
+              {moreDates.map((d, n) => (
+                <div key={n} className="more-date">
+                  <input type="date" value={d} aria-label={`Date ${n + 2}`} onChange={(e) => setMoreDates(moreDates.map((x, m) => (m === n ? e.target.value : x)))} />
+                  <button type="button" className="icon-btn" aria-label={`Remove date ${n + 2}`} onClick={() => setMoreDates(moreDates.filter((_, m) => m !== n))}>×</button>
+                </div>
+              ))}
+              <button type="button" className="chip chip-dashed amt-add" onClick={() => setMoreDates([...moreDates, ""])}>＋ Add date</button>
+            </>
+          )}
         </Step>
 
         <Step icon="coin" name="How much" set={isComputed ? tokens.length > 0 && formulaOk : value !== null}>
