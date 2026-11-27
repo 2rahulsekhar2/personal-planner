@@ -7,6 +7,7 @@ import type { PlannerCtx } from "./usePlanner";
 import type { MoneyCtx } from "./useMoney";
 import Panel from "./Panel";
 import Select from "./Select";
+import { MonthPicker } from "./DayPicker";
 import MoneySetup, { TONES } from "./MoneySetup";
 import { MoneyItemForm, MoneyLineForm } from "./MoneyItemForm";
 import { amountOn, byPlace, movedTo, carried, carryOver, loanNow, bankPosition, byPerson, byType, expected, forecast, formulaItems, FREQ_LABELS, inr, monthLabel, monthLines, partIds, shiftMonth, totals, waitingOn, withParts, yearRows, type Line, type MoneyFreq, type MoneyItem, type MoneyKind, type Proposal } from "@/lib/money";
@@ -1138,7 +1139,7 @@ export default function MoneyView({ ctx, money, circles, openItem }: { ctx: Plan
       </div>
       <h1 className="toolbar-title" aria-label={monthLabel(ym)}>
         {/* As on the Time side: the year small under the month, so the bar keeps its width from month to month. */}
-        <span className="range-pick">{stamp(ym, true)}</span>
+        <MonthPicker month={ym} now={nowYm} onPick={(m) => setPicked(m === nowYm ? null : m)} className="heading-pick range-pick" label={`${monthLabel(ym)}, choose a month`}>{stamp(ym, true)}<span className="heading-caret" aria-hidden>▾</span></MonthPicker>
       </h1>
       {ym !== nowYm && <button className="btn btn-sm" onClick={() => setPicked(null)}><span className="yr-wide">This month</span><span className="yr-narrow">Now</span></button>}
     </>
@@ -1150,7 +1151,8 @@ export default function MoneyView({ ctx, money, circles, openItem }: { ctx: Plan
         <button className="btn" onClick={() => setYearPick(shiftMonth(yearFrom, 12))} aria-label="Next 12 months">›</button>
       </div>
       <h1 className="toolbar-title" aria-label={`${monthLabel(yearFrom)} to ${monthLabel(shiftMonth(yearFrom, 11))}`}>
-        <span className="range-pick">{stamp(yearFrom)}<span aria-hidden>–</span>{stamp(shiftMonth(yearFrom, 11))}</span>
+        {/* The month picked starts the twelve. */}
+        <MonthPicker month={yearFrom} now={nowYm} onPick={(m) => setYearPick(m === nowYm ? null : m)} className="heading-pick range-pick" label={`${monthLabel(yearFrom)} to ${monthLabel(shiftMonth(yearFrom, 11))}, choose the first month`}>{stamp(yearFrom)}<span aria-hidden>–</span>{stamp(shiftMonth(yearFrom, 11))}<span className="heading-caret" aria-hidden>▾</span></MonthPicker>
       </h1>
       {yearFrom !== nowYm && <button className="btn btn-sm" onClick={() => setYearPick(null)}><span className="yr-wide">This month</span><span className="yr-narrow">Now</span></button>}
     </>

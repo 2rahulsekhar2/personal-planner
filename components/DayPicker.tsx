@@ -66,3 +66,51 @@ export default function DayPicker({ day, tz, onPick, className, label, children 
     </span>
   );
 }
+
+// The same, a step up: a year of months to jump to, the year turned at the top. `month` and the pick are yyyy-MM.
+export function MonthPicker({ month, now, onPick, className, label, children }: { month: string; now: string; onPick: (ym: string) => void; className?: string; label?: string; children: React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const [year, setYear] = useState(() => Number(month.slice(0, 4)));
+  const ref = useRef<HTMLSpanElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const away = (e: PointerEvent) => { if (!ref.current?.contains(e.target as Node)) setOpen(false); };
+    const esc = (e: KeyboardEvent) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("pointerdown", away);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("pointerdown", away); document.removeEventListener("keydown", esc); };
+  }, [open]);
+
+  return (
+    <span className="day-pick" ref={ref}>
+      <button type="button" className={className} aria-label={label} title="Choose a month" aria-haspopup="dialog" aria-expanded={open}
+        onClick={() => { setYear(Number(month.slice(0, 4))); setOpen(!open); }}>
+        {children}
+      </button>
+      {open && (
+        <div className="day-pick-pop card" role="dialog" aria-label="Choose a month">
+          <div className="side-head">
+            <h2>{year}</h2>
+            <div>
+              <button type="button" className="icon-btn" aria-label="Previous year" onClick={() => setYear(year - 1)}>‹</button>
+              <button type="button" className="icon-btn" aria-label="Next year" onClick={() => setYear(year + 1)}>›</button>
+            </div>
+          </div>
+          <div className="mini-grid month-grid">
+            {Array.from({ length: 12 }, (_, n) => {
+              const ym = `${year}-${String(n + 1).padStart(2, "0")}`;
+              const d = DateTime.fromISO(`${ym}-01`);
+              return (
+                <button type="button" key={ym} className={`mini-day ${ym === month ? "is-picked" : ""} ${ym === now ? "is-today" : ""}`}
+                  aria-label={d.toFormat("LLLL yyyy")} aria-current={ym === now ? "date" : undefined} onClick={() => { setOpen(false); onPick(ym); }}>
+                  {d.toFormat("LLL")}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </span>
+  );
+}
