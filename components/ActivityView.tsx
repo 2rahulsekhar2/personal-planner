@@ -5,6 +5,8 @@ import type { PlannerCtx } from "./usePlanner";
 import { seatsOf, type Circle } from "@/lib/circles";
 import { collapseActivity, describeActivity, type ActivityEntry } from "@/lib/activity";
 import { fmtTime, relativeDayLabel } from "@/lib/time";
+import type { Hit } from "./SearchDialog";
+import type { Appointment, Task } from "@/lib/types";
 
 const svg = (d: string) => <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d={d} /></svg>;
 // What kind of thing an entry is about, as a picture.
@@ -22,7 +24,7 @@ const toneOf = (action: string) =>
 const LIMIT = 200;
 
 // Who did what: your own activity, plus everything in the circles you belong to.
-export default function ActivityView({ ctx, circles }: { ctx: PlannerCtx; circles: Circle[] }) {
+export default function ActivityView({ ctx, circles, onOpen }: { ctx: PlannerCtx; circles: Circle[]; onOpen: (h: Hit) => void }) {
   const { supabase, userId, email, tz } = ctx;
   const [circleId, setCircleId] = useState<string | null>(null); // null: all activity
   const [person, setPerson] = useState(""); // "": everyone
@@ -82,6 +84,23 @@ export default function ActivityView({ ctx, circles }: { ctx: PlannerCtx; circle
     return out;
   }, [rows, tz]);
 
+  // A log row keeps only the title, so find the item by it: of several with that title (a repeat), the one
+  // created or changed nearest the moment logged.
+  const open = async (e: ActivityEntry) => {
+    if (e.kind === "circle") return e.circle_id && circles.some((c) => c.id === e.circle_id) ? onOpen({ kind: "circle", id: e.circle_id, name: e.title }) : ctx.toast("info", `You are no longer in “${e.title}”`);
+    const table = e.kind === "appointment" ? "appointments" : "tasks";
+    const find = (fields: string) => supabase.from(table).select(fields).eq("title", e.title).limit(100);
+    let res = await find(e.kind === "appointment" ? "*, participants:appointment_participants(user_id, reply)" : "*");
+    if (res.error) res = await find("*");
+    if (res.error) return ctx.toast("error", `Couldn’t open it: ${res.error.message}`);
+    const at = Date.parse(e.created_at);
+    const gap = (x: { created_at?: string; updated_at?: string }) => Math.min(...[x.created_at, x.updated_at].map((t) => (t ? Math.abs(Date.parse(t) - at) : Infinity)));
+    const rows = (res.data ?? []) as unknown as ((Appointment | Task) & { created_at?: string; updated_at?: string })[];
+    const best = rows.sort((a, b) => gap(a) - gap(b))[0];
+    if (!best) return ctx.toast("info", `That ${e.kind} has since been deleted`);
+    onOpen(e.kind === "appointment" ? { kind: "appt", appt: best as Appointment } : { kind: "task", task: best as Task });
+  };
+
   const circleName = (id: string | null) => circles.find((c) => c.id === id)?.name;
   // A person keeps the colour of their seat in a circle; someone in none of mine gets the plain one.
   const colorOf = useMemo(() => new Map(circles.flatMap((c) => seatsOf(c).map((m) => [m.user_id, m.color] as const))), [circles]);
@@ -120,11 +139,11 @@ export default function ActivityView({ ctx, circles }: { ctx: PlannerCtx; circle
             {d.items.map((e) => (
               <li key={e.id}>
                 <span className={`hist-mark is-${toneOf(e.action)}`} aria-hidden>{KIND_ICON[e.kind]}</span>
-                <span className="grow hist-what">
+                <button className="grow hist-what hist-open" onClick={() => open(e)}>
                   <span><strong>{e.user_id === userId ? "You" : e.email.split("@")[0]}</strong> {describeActivity(e, userId).replace(/^\S+ /, "")}{e.count > 1 && <span className="hist-count">×{e.count}</span>}</span>
                   {/* An entry about a circle already names it. */}
                   {e.kind !== "circle" && circleName(e.circle_id) && <span className="kit-sub">{circleName(e.circle_id)}</span>}
-                </span>
+                </button>
                 <span className="hist-time">{fmtTime(e.created_at, tz)}</span>
               </li>
             ))}

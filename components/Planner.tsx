@@ -376,7 +376,7 @@ export default function Planner() {
           {view === "places" && <PlacesView ctx={ctx} />}
           {view === "settings" && <SettingsView ctx={ctx} />}
           {view === "circles" && <CirclesView ctx={ctx} state={circles} linkToken={inviteToken} clearLink={() => setInviteToken(null)} />}
-          {view === "activity" && <ActivityView ctx={ctx} circles={live} />}
+          {view === "activity" && <ActivityView ctx={ctx} circles={live} onOpen={openHit} />}
         </section>
         {panel && (
           <Panel title={panelTitle} onClose={closePanel}>
